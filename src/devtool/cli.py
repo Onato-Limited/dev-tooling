@@ -2,10 +2,11 @@ import argparse
 import sys
 from importlib.metadata import version
 
-from devtool import pr_size
+from devtool import pr_size, protected_paths
 
 COMMANDS = {
     "pr-size": pr_size,
+    "protected-paths": protected_paths,
 }
 
 
