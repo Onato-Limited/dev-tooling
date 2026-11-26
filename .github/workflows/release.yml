@@ -1,0 +1,29 @@
+name: release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # A merge that leaves the version unchanged releases nothing; bump it in pyproject.toml.
+      - name: Tag a new version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version already exists; nothing to release"
+            exit 0
+          fi
+          major="v${version%%.*}"
+          git tag "v$version"
+          git tag -f "$major"
+          git push origin "refs/tags/v$version"
+          git push -f origin "refs/tags/$major"
