@@ -10,6 +10,10 @@ on:
         description: The only login whose `size-approved` label lets an oversized PR pass
         type: string
         default: ""
+      protected-paths:
+        description: Gitignore-style patterns, one per line, for files no PR may change
+        type: string
+        default: ""
 permissions: {}
 jobs:
   size:
@@ -57,3 +61,35 @@ jobs:
           | uv run --quiet --frozen --no-dev --project .devtool devtool pr-size
           --limit "$LIMIT" --label-events "$RUNNER_TEMP/label-events.json"
           ${APPROVER:+--approver "$APPROVER"}
+  protected-paths:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      # --no-renames lists a moved file's old path too, so moving a file out of a protected
+      # path counts as changing it.
+      - name: Check protected paths
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PATTERNS: ${{ inputs.protected-paths }}
+        run: >
+          git diff --name-only --no-renames "origin/$BASE_REF...HEAD"
+          | uv run --quiet --frozen --no-dev --project .devtool devtool protected-paths
+          --patterns "$PATTERNS"
