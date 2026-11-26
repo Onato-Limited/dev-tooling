@@ -1,0 +1,59 @@
+name: pr-policy
+on:
+  workflow_call:
+    inputs:
+      limit:
+        description: Most changed lines a PR may have, after `.github/pr-size-exclude`
+        type: number
+        default: 400
+      approver:
+        description: The only login whose `size-approved` label lets an oversized PR pass
+        type: string
+        default: ""
+permissions: {}
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The CLI comes from the same commit as this workflow, so a caller pinned at @v1 never runs
+      # a different version of the checks than the workflow it called. An empty repository would
+      # make checkout fall back to the caller's repo, so refuse that.
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Read the PR's label events
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.number }}
+        run: >
+          gh api --paginate "repos/$REPO/issues/$PR/events" --jq '.[]'
+          | jq -s . > "$RUNNER_TEMP/label-events.json"
+      - name: Count changed lines
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          LIMIT: ${{ inputs.limit }}
+          APPROVER: ${{ inputs.approver }}
+        run: >
+          git diff --numstat "origin/$BASE_REF...HEAD"
+          | uv run --quiet --frozen --no-dev --project .devtool devtool pr-size
+          --limit "$LIMIT" --label-events "$RUNNER_TEMP/label-events.json"
+          ${APPROVER:+--approver "$APPROVER"}

@@ -1,0 +1,14 @@
+name: pr
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+permissions: {}
+jobs:
+  policy:
+    uses: ./.github/workflows/pr-policy.yml
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    with:
+      approver: onato
