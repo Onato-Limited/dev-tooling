@@ -1,0 +1,7 @@
+# Checks a PR must pass before it merges, as they appear on the PR. Keep in step with the
+# required status checks on main's branch protection.
+lint
+coverage
+policy / size
+policy / protected-paths
+policy / required-checks

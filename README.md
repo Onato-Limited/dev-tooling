@@ -35,6 +35,12 @@ jobs:
 |---|---|---|
 | `size` | More than `limit` changed lines, unless `approver` added the `size-approved` label | `limit` (400), `approver`; `.github/pr-size-exclude` (gitignore-style paths not counted) |
 | `protected-paths` | Changing, moving or deleting a file that matches a pattern | `protected-paths`: gitignore-style patterns, one per line (none by default, so it passes) |
+| `required-checks` | A name in `.github/required-checks` that no job reports on a PR, or a missing file | `.github/required-checks`: one check name per line, `#` comments |
+
+`required-checks` reads your workflows the way GitHub names checks: a job's `name:`, or its id; a
+job that calls a workflow reports `<job> / <called job>` for each called job, fetching the called
+workflow at its ref when it is in another repo. Jobs in workflows that don't run on `pull_request`
+don't count. Matrix jobs and names with `${{ }}` are matched loosely, and the output lists them.
 
 A multi-line input is a YAML block scalar:
 
