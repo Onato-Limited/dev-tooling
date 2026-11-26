@@ -10,6 +10,31 @@ uvx --from git+https://github.com/Onato-Limited/dev-tooling@v1 devtool --version
 
 Pin `@v1`: it moves to each `v1.x.y` release and never to a breaking one.
 
+## PR policy checks
+
+Call the reusable workflow from a workflow on `pull_request`. Each check is its own job, shown on
+the PR as `<your job> / <check>` (here `policy / size`); list those names as required checks.
+
+```yaml
+on:
+  pull_request:
+    # labeled/unlabeled re-run the size check when the size-approved label changes.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+jobs:
+  policy:
+    uses: Onato-Limited/dev-tooling/.github/workflows/pr-policy.yml@v1
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    with:
+      approver: <login>
+```
+
+| Check | What fails it | Inputs and files |
+|---|---|---|
+| `size` | More than `limit` changed lines, unless `approver` added the `size-approved` label | `limit` (400), `approver`; `.github/pr-size-exclude` (gitignore-style paths not counted) |
+
 ## Develop
 
 ```sh
