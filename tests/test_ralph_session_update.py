@@ -3,14 +3,21 @@
 import subprocess
 from datetime import datetime
 
+import pytest
+
 from devtool.ralph import PullRequest
 from devtool.ralph_session import Bot, ClaudeSession
+from devtool.ralph_token import TokenError
 
 IDENTITY = ["-c", "user.name=Owner", "-c", "user.email=owner@example.com"]
 
 
 class FakeTokens:
+    fails = None  # what minting raises, if it does
+
     def session_env(self, environ):
+        if self.fails:
+            raise TokenError(self.fails)
         return {**environ, "GH_TOKEN": "ghs_bot"}
 
 
@@ -61,6 +68,11 @@ def on_origin(seed, path, branch="pr"):
     return git(seed, "show", f"origin/{branch}:{path}")
 
 
+def main_moves_on(seed):
+    commit(seed, "Main moves on", **{"a.txt": "a, later\n"})
+    git(seed, "push", "-q", "origin", "HEAD:main")
+
+
 def main_changes_b(seed):
     """The PR and `main` both change b.txt, so merging `main` in conflicts; the PR's head."""
     git(seed, "checkout", "-q", "pr")
@@ -75,8 +87,7 @@ def main_changes_b(seed):
 
 def test_update_merges_main_into_the_prs_branch_and_pushes_it_as_the_bot(tmp_path):
     seed, session = repos(tmp_path)
-    commit(seed, "Main moves on", **{"a.txt": "a, later\n"})
-    git(seed, "push", "-q", "origin", "HEAD:main")
+    main_moves_on(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
 
@@ -89,8 +100,7 @@ def test_update_merges_main_into_the_prs_branch_and_pushes_it_as_the_bot(tmp_pat
 def test_the_update_hook_runs_after_the_merge_in_its_worktree_and_may_commit(tmp_path):
     hook = "echo hooked > c.txt && git add c.txt && git commit -qm 'The hook adds c'"
     seed, session = repos(tmp_path, update_hook=hook)
-    commit(seed, "Main moves on", **{"a.txt": "a, later\n"})
-    git(seed, "push", "-q", "origin", "HEAD:main")
+    main_moves_on(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
 
@@ -98,8 +108,16 @@ def test_the_update_hook_runs_after_the_merge_in_its_worktree_and_may_commit(tmp
     assert (on_origin(seed, "a.txt"), on_origin(seed, "c.txt")) == ("a, later\n", "hooked\n")
 
 
-def test_a_conflict_the_update_hook_resolves_is_committed_and_pushed(tmp_path):
-    seed, session = repos(tmp_path, update_hook="git checkout -q --theirs b.txt && git add b.txt")
+@pytest.mark.parametrize(
+    "hook",
+    [
+        "git checkout -q --theirs b.txt && git add b.txt",
+        "git checkout -q --theirs b.txt && git add b.txt && git commit -q --no-edit",
+    ],
+    ids=["resolved", "resolved and committed"],
+)
+def test_a_conflict_the_update_hook_resolves_is_committed_and_pushed(tmp_path, hook):
+    seed, session = repos(tmp_path, update_hook=hook)
     main_changes_b(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
@@ -113,8 +131,7 @@ def test_a_conflict_the_update_hook_resolves_is_committed_and_pushed(tmp_path):
 def test_an_update_hook_that_fails_fails_the_update_and_pushes_nothing(tmp_path):
     seed, session = repos(tmp_path, update_hook="echo no entries file >&2; exit 3")
     before = git(seed, "rev-parse", "origin/pr")
-    commit(seed, "Main moves on", **{"a.txt": "a, later\n"})
-    git(seed, "push", "-q", "origin", "HEAD:main")
+    main_moves_on(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
 
@@ -123,19 +140,9 @@ def test_an_update_hook_that_fails_fails_the_update_and_pushes_nothing(tmp_path)
     assert git(seed, "rev-parse", "origin/pr") == before
 
 
-def test_a_conflict_the_update_hook_leaves_fails_the_update(tmp_path):
-    seed, session = repos(tmp_path, update_hook="true")
-    main_changes_b(seed)
-
-    assert session.update(PullRequest(40, behind=True, branch="pr")) == (
-        "merging main conflicts in b.txt"
-    )
-
-
-def test_without_an_update_hook_any_conflict_fails_and_pushes_nothing_or_leaves_a_worktree(
-    tmp_path,
-):
-    seed, session = repos(tmp_path)
+@pytest.mark.parametrize("hook", [None, "true"], ids=["no hook", "a hook that leaves it"])
+def test_a_conflict_left_unresolved_fails_and_pushes_nothing_or_leaves_a_worktree(tmp_path, hook):
+    seed, session = repos(tmp_path, update_hook=hook)
     before = main_changes_b(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
@@ -156,8 +163,7 @@ def test_a_pr_whose_branch_is_gone_reports_the_worktree_that_could_not_be_made(t
 
 def test_the_update_pushes_with_the_bots_token_through_gh_not_the_owners_keychain(tmp_path):
     seed, session = repos(tmp_path)
-    commit(seed, "Main moves on", **{"a.txt": "a, later\n"})
-    git(seed, "push", "-q", "origin", "HEAD:main")
+    main_moves_on(seed)
     calls = []
     session.run = lambda args, **kwargs: (
         calls.append((args, kwargs)) or subprocess.run(args, **kwargs)
@@ -166,8 +172,26 @@ def test_the_update_pushes_with_the_bots_token_through_gh_not_the_owners_keychai
     session.update(PullRequest(40, behind=True, branch="pr"))
 
     env = next(kwargs["env"] for args, kwargs in calls if "push" in args)
-    assert (env["GH_TOKEN"], env["GIT_CONFIG_VALUE_1"], env["GIT_CONFIG_VALUE_2"]) == (
-        "ghs_bot",
-        "",
-        "!gh auth git-credential",
-    )
+    helpers = (env["GIT_CONFIG_VALUE_1"], env["GIT_CONFIG_VALUE_2"])
+    assert (env["GH_TOKEN"], helpers) == ("ghs_bot", ("", "!gh auth git-credential"))
+
+
+def test_a_token_that_cannot_be_minted_fails_the_update_before_any_worktree(tmp_path):
+    _, session = repos(tmp_path)
+    session.tokens.fails = "GitHub refused the token request: HTTP 502"
+
+    failed = session.update(PullRequest(40, behind=True, branch="pr"))
+
+    assert failed == "the bot's token: GitHub refused the token request: HTTP 502"
+    assert not (tmp_path / "checkout-update-40").exists()
+
+
+def test_a_merge_that_fails_without_a_conflict_fails_the_update_with_gits_error(tmp_path):
+    seed, session = repos(tmp_path)
+    git(seed, "checkout", "-q", "--orphan", "unrelated")
+    commit(seed, "Unrelated", **{"u.txt": "u\n"})
+    git(seed, "push", "-q", "origin", "unrelated")
+
+    failed = session.update(PullRequest(41, behind=True, branch="unrelated"))
+
+    assert failed == "git merge --no-edit failed: fatal: refusing to merge unrelated histories"

@@ -161,16 +161,16 @@ class ClaudeSession:
 
     def update(self, pr: PullRequest) -> str | None:
         """Merges `main` into the PR's branch and pushes it as the bot; what failed, if it didn't.
-
-        Done here rather than through GitHub's update-branch, so the project's `update_hook` can
-        follow the merge, resolving conflicts or adding commits of its own.
-        """
+        Not GitHub's update-branch, so that `update_hook` can resolve conflicts or add commits."""
+        try:  # minted first: a failure must leave no worktree, nor reach a running session
+            env = self.tokens.session_env(
+                {**own_environ(self.environ), **self.bot.git_env("!gh auth git-credential")}
+            )
+        except TokenError as error:
+            return f"the bot's token: {error}"
         worktree = self.repo.parent / f"{self.repo.name}-update-{pr.number}"
         if failed := self._add_worktree(worktree, ["--detach", f"origin/{pr.branch}"]):
             return failed
-        env = self.tokens.session_env(
-            {**own_environ(self.environ), **self.bot.git_env("!gh auth git-credential")}
-        )
         failed = self._merge_main(worktree, env) or self._git_in(
             worktree, env, ["push", "origin", f"HEAD:refs/heads/{pr.branch}"]
         )
@@ -179,27 +179,19 @@ class ClaudeSession:
         return failed or left
 
     def _merge_main(self, worktree: Path, env: dict[str, str]) -> str | None:
-        """A merge that stops on conflicts leaves them for the hook, then for the check below."""
-        self._git_in(worktree, env, ["merge", "--no-edit", "origin/main"])
+        merge_failed = self._git_in(worktree, env, ["merge", "--no-edit", "origin/main"])
         if self.update_hook:
-            done = self.run(
-                ["/bin/sh", "-c", self.update_hook],
-                cwd=worktree,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            done = self._run_in(worktree, env, ["/bin/sh", "-c", self.update_hook])
             if done.returncode != 0:
                 return f"update_hook failed (exit {done.returncode}): {done.stderr.strip()}"
-        conflicted = self.run(
-            ["git", "-C", str(worktree), "diff", "--name-only", "--diff-filter=U"],
-            capture_output=True,
-            text=True,
-        ).stdout.split()
+        conflicted = self._run_in(worktree, env, ["git", "diff", "--name-only", "--diff-filter=U"])
+        conflicted = conflicted.stdout.split()
         if conflicted:
             return f"merging main conflicts in {', '.join(conflicted)}"
         if self._git_in(worktree, env, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]) is None:
             return self._git_in(worktree, env, ["commit", "--no-edit"])  # the hook resolved it
+        if self._git_in(worktree, env, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]):
+            return merge_failed or "main is not merged in after update_hook"
         return None
 
     def improve(self, prs: tuple[int, ...], while_running: Callable[[], None]) -> Improvement:
@@ -219,18 +211,19 @@ class ClaudeSession:
         )
 
     def _add_worktree(self, worktree: Path, start: list[str]) -> str | None:
-        """What failed, or None once the worktree exists."""
         return self._git(["fetch", "origin"]) or self._git(
             ["worktree", "add", str(worktree), *start]
         )
 
     def _git_in(self, worktree: Path, env: dict[str, str], step: list[str]) -> str | None:
-        done = self.run(
-            ["git", "-C", str(worktree), *step], capture_output=True, text=True, env=env
-        )
-        if done.returncode != 0:
+        if (done := self._run_in(worktree, env, ["git", *step])).returncode != 0:
             return f"git {' '.join(step[:2])} failed: {done.stderr.strip()}"
         return None
+
+    def _run_in(
+        self, worktree: Path, env: dict[str, str], args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(args, cwd=worktree, env=env, capture_output=True, text=True)
 
     def _branch(self, issue: int) -> str:
         return f"{self.branch_prefix}/{issue}-ralph"
