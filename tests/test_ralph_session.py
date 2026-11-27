@@ -589,3 +589,16 @@ def test_an_improver_worktree_that_cannot_be_removed_is_reported_with_its_prs(tm
         left_in_place="git worktree remove failed: fatal: contains modified or untracked files, "
         "use --force to delete it",
     )
+
+
+def test_without_a_project_prompt_the_default_one_is_filled_in(tmp_path):
+    processes = FakeProcesses(result("PR: #52"))
+    repo, claude = session(tmp_path, processes)
+    (repo / ".ralph" / "PROMPT.md").unlink()
+
+    claude.work(Issue(7, "In progress"), nothing)
+
+    prompt = processes.claude()[0][2]
+    assert "issue #7." in prompt
+    assert "branch `someone/7-ralph`" in prompt
+    assert "{issue}" not in prompt and "{branch}" not in prompt

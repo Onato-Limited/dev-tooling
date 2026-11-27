@@ -8,7 +8,7 @@ from devtool import main_audit
 from devtool.gates import approved_by
 from devtool.merge_decision import GREEN, RETRO_HEADING
 from devtool.merge_decision import LABEL as MERGE_WHEN_GREEN
-from devtool.ralph import GitHubError, Issue, PullRequest
+from devtool.ralph import GitHubError, Issue, PullRequest, branch_name
 
 Run = Callable[[list[str], str | None], str]
 DRAFT, PLAN_APPROVED = "draft", "plan-approved"
@@ -248,7 +248,7 @@ class GitHubAdapter:
             owner=self.owner,
             repo=self.repo,
             number=issue,
-            branch=f"{self.branch_prefix}/{issue}-ralph",
+            branch=branch_name(self.branch_prefix, issue),
         )["repository"]
         closing = data["issue"]["closedByPullRequestsReferences"]["nodes"]
         return data["pullRequests"]["totalCount"] > 0 or any(
