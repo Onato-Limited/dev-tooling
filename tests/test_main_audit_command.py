@@ -87,7 +87,7 @@ def test_a_push_that_kept_to_the_policy_opens_nothing_and_passes(capsys, tmp_pat
 
 
 ALARM = (
-    "- **every commit on main comes from a merged PR** (ccc3333): ccc3333 was pushed to main "
+    "- **every commit on main comes from a merged PR** (ccc3333): This commit was pushed to main "
     "without a PR. Revert it on main and open the change as a PR.\n"
     "\n"
     "Run: https://github.com/o/r/actions/runs/99\n"
@@ -112,8 +112,8 @@ def test_a_violation_opens_an_issue_assigned_to_the_given_login_and_fails(capsys
 
 def no_pr(sha):
     return (
-        f"- **every commit on main comes from a merged PR** ({sha}): {sha} was pushed to main "
-        "without a PR. Revert it on main and open the change as a PR."
+        f"- **every commit on main comes from a merged PR** ({sha}): This commit was pushed to "
+        "main without a PR. Revert it on main and open the change as a PR."
     )
 
 
