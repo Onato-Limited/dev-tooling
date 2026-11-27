@@ -210,8 +210,8 @@ def own_environ(environ: dict[str, str]) -> dict[str, str]:
 
 
 def without_token(environ: dict[str, str]) -> dict[str, str]:
-    """Without the owner's GH_TOKEN: the session's `gh` reads the bot's from its token file."""
-    return {k: v for k, v in environ.items() if k != "GH_TOKEN"}
+    """Without the owner's tokens: the session's `gh` reads the bot's from its token file."""
+    return {k: v for k, v in environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
 
 
 def with_session_path(session_path: str | None, environ: dict[str, str]) -> dict[str, str]:

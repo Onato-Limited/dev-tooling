@@ -388,7 +388,7 @@ def test_the_token_file_gets_a_new_token_once_45_minutes_pass_and_not_before(
 def test_the_session_is_told_where_its_token_file_is_and_given_no_token_itself(tmp_path):
     processes = FakeProcesses(result("PR: #52"))
     _, claude = session(tmp_path, processes)
-    claude.environ = {"PATH": "/usr/bin", "GH_TOKEN": "owner-token"}
+    claude.environ = {"PATH": "/usr/bin", "GH_TOKEN": "owner-token", "GITHUB_TOKEN": "owner-token"}
 
     claude.work(Issue(7, "In progress"), nothing)
 
