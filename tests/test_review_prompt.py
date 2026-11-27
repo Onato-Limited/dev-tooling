@@ -126,8 +126,8 @@ def test_a_finding_the_diff_still_breaks_stays_hard_whatever_the_replies_say(rep
 
     out = " ".join(capsys.readouterr().out.split())
     assert (
-        "Raise it again only as a hard finding, when the diff as it stands breaks a documented "
-        "rule, whether or not it did before" in out
+        "Raise it again only as a hard finding, when the diff as it stands still has what Pass 1 "
+        "or Pass 2 calls hard, whether or not it did before" in out
     )
 
 

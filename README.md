@@ -87,7 +87,8 @@ the diff and PR body, and a Spec pass against the issue the PR closes and the sp
 finding starts with a label, `[Standards]` or `[Spec]` then `hard:` or `judgement:`, which review
 threads reads. If your rules define a format for findings, the review uses it after the label.
 Each review is given its earlier findings on the PR and the replies to them. It doesn't raise
-again a finding that was answered, taken or left with a reason, unless the diff now makes it hard.
+again a finding that was answered, taken or left with a reason, unless the diff as it stands still
+has what either pass calls hard.
 
 | Input | Default | |
 |---|---|---|
