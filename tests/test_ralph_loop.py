@@ -654,6 +654,7 @@ def test_the_improvers_prs_and_proposals_are_reported_and_each_proposal_messages
 
     stop = loop(github, session, notes, improves=True)
 
+    assert github.arranged == []  # PR #50 merged at once
     assert notes == [
         "Ralph loop: the improver proposes #51; it needs your decision.",
         "Ralph loop: the improver proposes #52; it needs your decision.",
@@ -768,13 +769,36 @@ def test_the_improvers_pr_gets_its_own_hour_to_merge():
     assert stop == "Ralph loop stopped: milestone complete.\nImprover PRs: PR #50"
 
 
-def test_at_the_iteration_cap_the_improver_still_reviews_the_last_prs():
-    github = FakeGitHub([Issue(7, TODO)])
+def test_at_the_iteration_cap_with_issues_left_the_improver_still_reviews_the_last_prs():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
     session = FakeSession(github, {7: merged_run(40)})
 
-    loop(github, session, max_iterations=1, improves=True)
+    stop = loop(github, session, max_iterations=1, improves=True)
 
     assert session.improved == [((40,), 1)]
+    assert stop.startswith("Ralph loop stopped: iteration cap (1) reached.\n")
+
+
+def test_the_last_improver_pass_waits_for_the_pending_prs_to_merge():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: merged_run(40), 8: pending_run(41)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(8, 41)
+
+    loop(github, session, clock=clock, improves=True)
+
+    assert session.improved == [((40, 41), 2)]
+
+
+def test_a_pr_that_never_merges_stops_the_loop_without_an_improver_pass():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: merged_run(40), 8: pending_run(41)})
+    clock = Clock()
+
+    stop = loop(github, session, clock=clock, improves=True)
+
+    assert (sum(clock.sleeps), session.improved) == (3600, [])
+    assert stop.startswith("Ralph loop stopped: auto-merge still pending after 60 minutes: PR #41.")
 
 
 def test_a_closed_draft_is_not_undrafted_or_moved_when_the_plan_is_approved():

@@ -217,15 +217,14 @@ class _Loop:
 
     def step(self, issue: Issue | None) -> Stop | None:
         self.refresh_pending()
-        if issue is None:
-            stop = self.wait_for_merges(Stop())
-            if stop == Stop() and self.merged and self.improves:
+        halt = None if issue is None else self.halt()
+        if issue is None or halt:
+            # No more sessions, but the open PRs still need merging before the loop stops.
+            stop = self.wait_for_merges(Stop(halt))
+            if stop == Stop(halt) and self.merged and self.improves:  # merged, not timed out
                 self.improve()
                 return None  # its PRs need merging before the loop stops
             return stop
-        if halt := self.halt():
-            # No more sessions, but the open PRs still need merging before the loop stops.
-            return self.wait_for_merges(Stop(halt))
         if self.improves and len(self.merged) >= IMPROVE_AFTER:
             self.improve()
             return None
