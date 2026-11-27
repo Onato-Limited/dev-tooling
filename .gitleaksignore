@@ -1,0 +1,3 @@
+# Fingerprints of gitleaks false positives (commit:file:rule:line). Each needs a reason.
+# A fake PEM header in a test's repr assertion, removed in the next commit (PR #80).
+db41b65a3439fd5144d240b5b882169459f2e0b9:tests/test_ralph_token.py:private-key:82
