@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from devtool.ralph import POLL_SECONDS, Issue, Outcome
+from devtool.ralph import POLL_SECONDS, Improvement, Issue, Outcome
 from devtool.ralph_session import Bot, ClaudeSession
 from devtool.ralph_token import TokenError
 
@@ -100,12 +100,14 @@ def session(tmp_path, processes):
     repo = tmp_path / "checkout"
     (repo / ".ralph").mkdir(parents=True)
     (repo / ".ralph" / "PROMPT.md").write_text("Work on issue #{issue} on branch {branch}.\n")
+    (repo / ".ralph" / "IMPROVE.md").write_text("Review {prs}.\n")
     return repo, ClaudeSession(
         repo=repo,
         branch_prefix="someone",
         bot=Bot("some-app", 123),
         tokens=FakeTokens(),
         session_path=None,
+        update_hook=None,
         run=processes,
         start=processes.start,
         environ={"PATH": "/usr/bin"},
@@ -485,3 +487,112 @@ def test_the_session_commits_and_pushes_as_the_bot_not_the_owner(tmp_path):
         "GIT_CONFIG_VALUE_2": "ralph",
     }
     assert behind_session_bin(env["PATH"]) == "/usr/bin"
+
+
+def test_the_improver_reviews_the_merged_prs_in_a_detached_worktree_of_main(tmp_path):
+    processes = FakeProcesses(result("Done.\nPR: #63\nPR: #64\nPROPOSED: #65\n"))
+    repo, claude = session(tmp_path, processes)
+
+    improvement = claude.improve((60, 61, 62), nothing)
+
+    worktree = tmp_path / "checkout-improve-20261123-010203"
+    assert improvement == Improvement(prs=(63, 64), proposals=(65,))
+    assert [args for args, _ in processes.calls[:2]] == [
+        ["git", "-C", str(repo), "fetch", "origin"],
+        ["git", "-C", str(repo), "worktree", "add", str(worktree), "--detach", "origin/main"],
+    ]
+    args, kwargs = processes.claude()
+    assert args[2] == "Review PRs #60, #61, #62.\n"
+    assert kwargs["cwd"] == worktree
+    assert (repo / ".ralph" / "logs" / "20261123-010203-improve.log").exists()
+
+
+def test_an_improver_without_a_worktree_needs_a_human_and_starts_no_claude(tmp_path):
+    processes = FakeProcesses(result("PR: #63"))
+    processes.fails = {"fetch": subprocess.CompletedProcess([], 128, "", "fatal: offline\n")}
+    _, claude = session(tmp_path, processes)
+
+    improvement = claude.improve((60,), nothing)
+
+    assert improvement == Improvement(needs_human="git fetch origin failed: fatal: offline")
+    assert [args[0] for args, _ in processes.calls] == ["git"]
+
+
+def test_an_improver_that_ends_without_a_result_needs_a_human_and_points_at_its_log(tmp_path):
+    repo, claude = session(tmp_path, FakeProcesses({"type": "system"}, exit=1))
+
+    improvement = claude.improve((60,), nothing)
+
+    log = repo / ".ralph" / "logs" / "20261123-010203-improve.log"
+    assert improvement == Improvement(needs_human=f"the session ended without a result; see {log}")
+
+
+def test_removing_an_issues_worktree_keeps_uncommitted_work_and_deletes_its_branch(tmp_path):
+    processes = FakeProcesses()
+    repo, claude = session(tmp_path, processes)
+    (tmp_path / "checkout-7").mkdir()
+
+    failed = claude.remove(7)
+
+    assert failed is None
+    assert [args for args, _ in processes.calls] == [
+        ["git", "-C", str(repo), "worktree", "remove", str(tmp_path / "checkout-7")],
+        ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", "refs/heads/someone/7-ralph"],
+        ["git", "-C", str(repo), "branch", "-D", "someone/7-ralph"],
+    ]
+
+
+def test_a_worktree_with_uncommitted_work_is_kept_with_its_branch_and_the_failure_reported(
+    tmp_path,
+):
+    processes = FakeProcesses()
+    error = "fatal: contains modified or untracked files, use --force to delete it\n"
+    processes.fails = {"worktree remove": subprocess.CompletedProcess([], 128, "", error)}
+    _, claude = session(tmp_path, processes)
+    (tmp_path / "checkout-7").mkdir()
+
+    failed = claude.remove(7)
+
+    assert failed == (
+        "git worktree remove failed: fatal: contains modified or untracked files, "
+        "use --force to delete it"
+    )
+    assert [args[3] for args, _ in processes.calls] == ["worktree"]
+
+
+def test_removing_an_issue_with_no_worktree_or_branch_left_over_succeeds(tmp_path):
+    processes = FakeProcesses()
+    processes.fails = {"show-ref --verify": subprocess.CompletedProcess([], 1, "", "")}
+    repo, claude = session(tmp_path, processes)
+
+    failed = claude.remove(7)
+
+    assert failed is None
+    assert [args for args, _ in processes.calls] == [
+        ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", "refs/heads/someone/7-ralph"],
+    ]
+
+
+def test_the_improvers_worktree_is_removed_once_its_session_ends(tmp_path):
+    processes = FakeProcesses(result("PR: #63"))
+    repo, claude = session(tmp_path, processes)
+
+    claude.improve((60,), nothing)
+
+    worktree = tmp_path / "checkout-improve-20261123-010203"
+    assert processes.calls[-1][0] == ["git", "-C", str(repo), "worktree", "remove", str(worktree)]
+
+
+def test_an_improver_worktree_that_cannot_be_removed_is_reported_with_its_prs(tmp_path):
+    processes = FakeProcesses(result("PR: #63"))
+    error = "fatal: contains modified or untracked files, use --force to delete it\n"
+    processes.fails = {"worktree remove": subprocess.CompletedProcess([], 128, "", error)}
+    _, claude = session(tmp_path, processes)
+
+    improvement = claude.improve((60,), nothing)
+
+    assert improvement == Improvement(
+        prs=(63,),
+        left_in_place="git worktree remove failed: fatal: contains modified or untracked files, "
+        "use --force to delete it",
+    )
