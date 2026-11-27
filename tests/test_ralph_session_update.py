@@ -162,16 +162,20 @@ def test_a_conflict_left_unresolved_fails_and_pushes_nothing_or_leaves_a_worktre
     assert not (tmp_path / "checkout-update-40").exists()
 
 
+@pytest.mark.parametrize(
+    ("change", "left"), [("echo x >> a.txt", "a.txt"), ("echo x > new.txt", "new.txt")],
+    ids=["an unstaged edit", "an untracked file"],
+)  # fmt: skip
 def test_a_hook_that_resolves_a_conflict_but_leaves_other_changes_fails_and_pushes_nothing(
-    tmp_path,
+    tmp_path, change, left
 ):
-    hook = "git checkout -q --theirs b.txt && git add b.txt && echo x >> a.txt"
+    hook = f"git checkout -q --theirs b.txt && git add b.txt && {change}"
     seed, session = repos(tmp_path, update_hook=hook)
     before = main_changes_b(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
 
-    assert failed == "update_hook left uncommitted changes in a.txt"
+    assert failed == f"update_hook left uncommitted changes in {left}"
     git(seed, "fetch", "-q", "origin")
     assert git(seed, "rev-parse", "origin/pr") == before
 
