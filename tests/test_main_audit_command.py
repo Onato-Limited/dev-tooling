@@ -12,6 +12,7 @@ class FakeGitHub:
 
     def __init__(self, commits, pulls=None, runs=None, statuses=None, open_issues=(), fail=None):
         self.fail = fail or {}
+        self.listed = 250
         self.commits = commits
         self.pulls = pulls or {}
         self.runs = runs or {}
@@ -27,7 +28,9 @@ class FakeGitHub:
             return {"number": 31}
         if "/compare/" in path:
             page = int(path.rsplit("page=", 1)[1])
-            found = self.commits[(page - 1) * 100 : page * 100]
+            # GitHub lists at most 250 of a comparison's commits, whatever total_commits says.
+            listed = self.commits[: self.listed]
+            found = listed[(page - 1) * 100 : page * 100]
             return {"total_commits": len(self.commits), "commits": found}
         sha = path.split("/commits/")[-1].split("/")[0]
         if path.endswith("/pulls"):
@@ -136,6 +139,27 @@ def test_each_pushed_commit_past_the_first_hundred_is_audited_with_its_pr_and_he
         "repo's settings, under Pull Requests.",
         "- **every commit on main comes from a merged PR** (ooo7777): ooo7777 was pushed to main "
         "without a PR. Revert it on main and open the change as a PR.",
+    ]
+
+
+def test_a_push_past_what_github_lists_is_a_violation_and_the_listed_commits_are_audited(
+    capsys, tmp_path
+):
+    pushed = [squash(f"s{n}", n, f"h{n}") for n in range(3)]
+    commits = [found for found, _, _ in pushed] + [commit("ccc3333")]
+    pulls = {sha: prs for _, its, _ in pushed for sha, prs in its.items()}
+    runs = {head: checks for _, _, its in pushed for head, checks in its.items()}
+    github = FakeGitHub(commits, pulls, runs)
+    github.listed = 3
+
+    code = run(github, tmp_path, after="ccc3333")
+
+    assert code == 1
+    assert capsys.readouterr().out.splitlines()[:2] == [
+        "- **every pushed commit is audited** (ccc3333): the push added 4 commits and GitHub "
+        "lists only the first 3. Audit the rest by hand with `git log --first-parent` on main, "
+        "then close this issue.",
+        "",
     ]
 
 

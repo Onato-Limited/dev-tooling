@@ -31,6 +31,8 @@ class Push:
     forced: bool
     after: str
     commits: list[Commit]
+    # How many commits the push added; more than `commits` when GitHub didn't list them all.
+    added: int | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,10 @@ REFUSED_FIX = (
 FORCED_FIX = (
     "Check what the push dropped from main and bring it back through a PR. Never force-push main."
 )
+UNLISTED = "every pushed commit is audited"
+UNLISTED_FIX = (
+    "Audit the rest by hand with `git log --first-parent` on main, then close this issue."
+)
 NO_PR = "every commit on main comes from a merged PR"
 NO_PR_FIX = "Revert it on main and open the change as a PR."
 SQUASH = "PRs merge by squash"
@@ -65,6 +71,12 @@ def audit(push: Push, required: list[str]) -> list[Violation]:
     if push.forced:
         found = f"main was force-pushed to {push.after}"
         violations.append(Violation("no forced pushes", push.after, found, FORCED_FIX))
+    if push.added is not None and push.added > len(push.commits):
+        found = (
+            f"the push added {push.added} commits and GitHub lists only the first "
+            f"{len(push.commits)}"
+        )
+        violations.append(Violation(UNLISTED, push.after, found, UNLISTED_FIX))
     for commit in push.commits:
         if commit.pr is None:
             found = f"{commit.sha} was pushed to main without a PR"
@@ -91,13 +103,14 @@ def audit(push: Push, required: list[str]) -> list[Violation]:
 
 
 def pushed_commits(repo: str, before: str, after: str, rest: Rest) -> list[dict]:
-    """Every commit the push added, past the 20 the push event lists."""
+    """The commits the push added, past the 20 the push event lists, and how many there are."""
     commits, page = [], 1
     while True:
         found = rest("GET", f"repos/{repo}/compare/{before}...{after}?per_page=100&page={page}")
         commits += found["commits"]
-        if len(commits) >= found["total_commits"]:
-            return commits
+        # GitHub lists at most 250 of a comparison's commits; past that, pages come back empty.
+        if len(commits) >= found["total_commits"] or not found["commits"]:
+            return commits, found["total_commits"]
         page += 1
 
 
@@ -118,11 +131,12 @@ def merged_pr(repo: str, sha: str, rest: Rest) -> MergedPR | None:
 
 
 def gather(repo: str, event: dict, rest: Rest) -> Push:
+    listed, total = pushed_commits(repo, event["before"], event["after"], rest)
     commits = [
         Commit(found["sha"], len(found["parents"]), merged_pr(repo, found["sha"], rest))
-        for found in pushed_commits(repo, event["before"], event["after"], rest)
+        for found in listed
     ]
-    return Push(event["forced"], event["after"], commits)
+    return Push(event["forced"], event["after"], commits, total)
 
 
 def main(argv: list[str], stdin: TextIO = sys.stdin, rest: Rest = gh_rest) -> int:
