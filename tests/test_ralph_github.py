@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from devtool.ralph import GitHubError, Issue
+from devtool.ralph import GitHubError, Issue, PullRequest
 from devtool.ralph_github import GitHubAdapter, gh_runner
 
 
@@ -225,3 +225,167 @@ def test_tests_cannot_reach_github():
         gh_runner(subprocess.run)(["--version"], None)
     with pytest.raises(RuntimeError, match="tests must not touch the network"):
         socket.create_connection(("api.github.com", 443))
+
+
+def commit(**checks):
+    """A PR commit and its check runs; no checks means GitHub ran none (a null rollup)."""
+    if not checks:
+        return {"commit": {"statusCheckRollup": None}}
+    runs = [run(name.replace("_", "-"), c, "2026-11-27T08:00:00Z") for name, c in checks.items()]
+    return runs_commit(*runs)
+
+
+def run(name, conclusion, started_at):
+    return {"name": name, "conclusion": conclusion, "startedAt": started_at}
+
+
+def runs_commit(*runs):
+    return {"commit": {"statusCheckRollup": {"contexts": {"nodes": [*runs, {}]}}}}
+
+
+def pr_reply(merged=False, comments=(), commits=(), merge_state="CLEAN", head="", threads=()):
+    return {
+        "repository": {
+            "pullRequest": {
+                "merged": merged,
+                "mergeStateStatus": merge_state,
+                "headRefName": head,
+                "reviewThreads": {"nodes": [{"isResolved": resolved} for resolved in threads]},
+                "comments": {"nodes": [{"body": body} for body in comments]},
+                "commits": {"nodes": list(commits)},
+            }
+        }
+    }
+
+
+def test_pull_request_counts_review_change_requests_and_the_trailing_ci_failures():
+    gh = FakeGh(
+        pr_reply(
+            commits=[
+                commit(ci="FAILURE", claude_review="FAILURE"),
+                commit(ci="SUCCESS", claude_review="FAILURE"),
+                commit(ci="FAILURE", claude_review="SUCCESS"),
+                commit(),
+                commit(ci="FAILURE", claude_review="FAILURE"),
+            ],
+            comments=["## Standards\nNo hard findings."],
+        )
+    )
+
+    pr = adapter(gh).pull_request(41)
+
+    assert pr == PullRequest(41, changes_requested=3, ci_failure_streak=2, has_retro_notes=False)
+    assert "number=41" in sent_variables(gh.calls[0])
+
+
+def test_pull_request_reports_merged_and_a_retro_notes_comment():
+    gh = FakeGh(
+        pr_reply(
+            merged=True, comments=["Done.\n\n## Retro notes\n- Went fine."], commits=[commit()]
+        )
+    )
+
+    assert adapter(gh).pull_request(44) == PullRequest(44, merged=True, has_retro_notes=True)
+
+
+@pytest.mark.parametrize(
+    ("state", "behind"), [("BEHIND", True), ("CLEAN", False), ("BLOCKED", False)]
+)
+def test_pull_request_says_whether_it_is_behind_main(state, behind):
+    gh = FakeGh(pr_reply(merge_state=state, commits=[commit()]))
+
+    assert adapter(gh).pull_request(54).behind is behind
+    assert "mergeStateStatus" in sent_query(gh.calls[0])
+
+
+def test_pull_request_names_its_branch():
+    gh = FakeGh(pr_reply(head="someone/54-ralph", commits=[commit()]))
+
+    assert adapter(gh).pull_request(54).branch == "someone/54-ralph"
+    assert "headRefName" in sent_query(gh.calls[0])
+
+
+@pytest.mark.parametrize(
+    ("state", "commits", "held"),
+    [
+        ("BLOCKED", [commit(ci="FAILURE"), commit(ci="SUCCESS", claude_review="SUCCESS")], True),
+        ("BLOCKED", [commit(ci="SUCCESS", claude_review="FAILURE")], False),
+        ("BLOCKED", [commit(ci="SUCCESS"), commit()], False),
+        ("CLEAN", [commit(ci="SUCCESS", claude_review="SUCCESS")], False),
+        ("BLOCKED", [commit(ci="SKIPPED", lint="NEUTRAL", claude_review="SUCCESS")], True),
+    ],
+)
+def test_a_pull_request_says_whether_github_blocks_it_once_every_check_passed(state, commits, held):
+    gh = FakeGh(pr_reply(merge_state=state, commits=commits))
+
+    assert adapter(gh).pull_request(201).blocked_with_checks_passing is held
+
+
+def test_any_failing_check_but_the_review_counts_toward_the_ci_streak():
+    gh = FakeGh(
+        pr_reply(
+            commits=[
+                commit(lint="FAILURE", claude_review="SUCCESS"),
+                commit(coverage="FAILURE", lint="SUCCESS"),
+                commit(claude_review="FAILURE"),
+                commit(lint="SUCCESS", coverage="FAILURE"),
+            ],
+            comments=["## Retro notes\n- fine"],
+        )
+    )
+
+    pr = adapter(gh).pull_request(41)
+
+    assert (pr.ci_failure_streak, pr.changes_requested) == (3, 1)
+
+
+def test_a_pull_request_counts_its_unresolved_review_threads():
+    gh = FakeGh(pr_reply(threads=[True, False, True, False, False], commits=[commit()]))
+
+    assert adapter(gh).pull_request(201).unresolved_threads == 3
+    assert "reviewThreads" in sent_query(gh.calls[0])
+
+
+def test_the_review_check_is_the_one_the_config_names():
+    commits = [
+        commit(verdict="FAILURE"),
+        commit(verdict="FAILURE"),
+        commit(claude_review="FAILURE"),
+    ]
+    gh = FakeGh(pr_reply(commits=commits))
+
+    pr = GitHubAdapter("owner/repo", "owner", 2, "verdict", gh).pull_request(41)
+
+    assert (pr.changes_requested, pr.ci_failure_streak) == (2, 1)
+
+
+def test_a_check_run_more_than_once_counts_by_its_newest_run_wherever_github_lists_it():
+    head = runs_commit(
+        run("lint", "FAILURE", "2026-11-27T08:47:00Z"),
+        run("lint", "SUCCESS", "2026-11-27T08:42:00Z"),
+        run("claude-review", "SUCCESS", "2026-11-27T08:42:00Z"),
+    )
+    gh = FakeGh(pr_reply(merge_state="BLOCKED", commits=[head]))
+
+    pr = adapter(gh).pull_request(93)
+
+    assert (pr.ci_failure_streak, pr.blocked_with_checks_passing) == (1, False)
+    assert "startedAt" in sent_query(gh.calls[0])
+
+
+def test_a_queued_run_not_yet_started_is_the_newest():
+    head = runs_commit(
+        run("claude-review", None, None),
+        run("claude-review", "SUCCESS", "2026-11-27T08:42:00Z"),
+        run("lint", "SUCCESS", "2026-11-27T08:42:00Z"),
+    )
+    gh = FakeGh(pr_reply(merge_state="BLOCKED", commits=[head]))
+
+    assert adapter(gh).pull_request(93).blocked_with_checks_passing is False
+
+
+def test_a_comment_that_only_mentions_the_retro_heading_is_not_retro_notes():
+    comments = ["Please add a `## Retro notes` comment.", "## Retro notes later"]
+    gh = FakeGh(pr_reply(comments=comments, commits=[commit()]))
+
+    assert adapter(gh).pull_request(93).has_retro_notes is False
