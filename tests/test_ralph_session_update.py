@@ -162,6 +162,56 @@ def test_a_conflict_left_unresolved_fails_and_pushes_nothing_or_leaves_a_worktre
     assert not (tmp_path / "checkout-update-40").exists()
 
 
+def test_a_hook_that_resolves_a_conflict_but_leaves_other_changes_fails_and_pushes_nothing(
+    tmp_path,
+):
+    hook = "git checkout -q --theirs b.txt && git add b.txt && echo x >> a.txt"
+    seed, session = repos(tmp_path, update_hook=hook)
+    before = main_changes_b(seed)
+
+    failed = session.update(PullRequest(40, behind=True, branch="pr"))
+
+    assert failed == "update_hook left uncommitted changes in a.txt"
+    git(seed, "fetch", "-q", "origin")
+    assert git(seed, "rev-parse", "origin/pr") == before
+
+
+def test_a_merge_commit_that_git_refuses_fails_the_update_with_gits_error(tmp_path):
+    seed, session = repos(tmp_path, update_hook="git checkout -q --theirs b.txt && git add b.txt")
+    before = main_changes_b(seed)
+    refuse = tmp_path / "checkout" / ".git" / "hooks" / "pre-commit"
+    refuse.write_text("#!/bin/sh\necho no merges here >&2\nexit 1\n")
+    refuse.chmod(0o755)
+
+    failed = session.update(PullRequest(40, behind=True, branch="pr"))
+
+    assert failed == "git commit --no-edit failed: no merges here"
+    git(seed, "fetch", "-q", "origin")
+    assert git(seed, "rev-parse", "origin/pr") == before
+
+
+def test_without_a_hook_a_checkout_that_is_dirty_from_the_start_still_merges_and_pushes(
+    tmp_path,
+):
+    # A CRLF file under text=auto, or paths that differ only by case on macOS, can leave a fresh
+    # checkout dirty; git's stat cache makes that hard to stage, so git status is made to say so.
+    seed, session = repos(tmp_path)
+    main_moves_on(seed)
+
+    def run(args, **kwargs):
+        done = subprocess.run(args, **kwargs)
+        if args[1:] == ["status", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, " M crlf.txt\n", "")
+        return done
+
+    session.run = run
+
+    failed = session.update(PullRequest(40, behind=True, branch="pr"))
+
+    assert failed is None
+    assert on_origin(seed, "a.txt") == "a, later\n"
+
+
 def test_a_pr_whose_branch_is_gone_reports_the_worktree_that_could_not_be_made(tmp_path):
     _, session = repos(tmp_path)
 

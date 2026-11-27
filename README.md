@@ -300,7 +300,7 @@ of the value.
 | `audit_check` | The main audit's check name, `main-audit / audit` by default. |
 | `notify` | A command run with each message to you as its last argument. Every message is printed too. |
 | `cleanup_list`, `cleanup_prune` | Set both or neither. The first prints the issue numbers that have a device of their own (a simulator, say), one per line; the second, given an issue, removes its device. The loop prunes each closed issue's device after every pass. |
-| `update_hook` | A shell command run as the bot after `main` is merged into a PR's branch. It runs in a fresh worktree, `<checkout>-update-<pr>`, with a detached `HEAD` at `origin/<branch>`, so it holds nothing a session built or installed and has no current branch. The worktree is removed afterwards, and `session_path` isn't on its `PATH`. The hook may resolve conflicts and commit. The update fails if it exits non-zero or leaves a conflict. |
+| `update_hook` | A shell command run as the bot after `main` is merged into a PR's branch. It runs in a fresh worktree, `<checkout>-update-<pr>`, with a detached `HEAD` at `origin/<branch>`, so it holds nothing a session built or installed and has no current branch. The worktree is removed afterwards, and `session_path` isn't on its `PATH`. The hook may resolve conflicts and commit; it must commit whatever it changes, or stage it during a conflicted merge. The update fails if the hook exits non-zero, or leaves a conflict or anything `git status` lists, untracked files included. |
 | `session_path` | Directories put first on the session's `PATH`, separated by `:`; relative ones are from the checkout. |
 
 `notify` and the cleanup commands run in the checkout.
