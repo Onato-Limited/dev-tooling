@@ -53,10 +53,6 @@ def assemble(
     tokens: SessionTokens,
 ) -> Parts:
     """The loop's parts for the project checked out at `repo`; `gh` is the owner's login."""
-    if bool(config.cleanup_list) != bool(config.cleanup_prune):
-        raise ConfigError(
-            "Ralph loop can't start: set both cleanup_list and cleanup_prune, or neither."
-        )
     prefix = branch_prefix(run, repo)
     name = gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], None)
     github = GitHubAdapter(
@@ -156,6 +152,6 @@ def main(
     except (GitHubError, TokenError, DevicesError) as error:
         said = str(error)  # a TokenError already says "Ralph loop can't …"
         stop = said if said.startswith("Ralph loop") else f"Ralph loop stopped: {said}"
-        (parts.notify if parts else print)(stop)
+        (parts.notify if parts and not args.dry_run else print)(stop)
         return 1
     return 0

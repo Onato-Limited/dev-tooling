@@ -158,3 +158,19 @@ def test_a_board_number_that_is_not_a_number_fails_naming_the_key(tmp_path, valu
         f"Ralph loop can't start: board_number in {path} is {value!r}. Set it to the project's "
         "number, from its URL (.../projects/<number>)."
     )
+
+
+@pytest.mark.parametrize(
+    ("key", "other"), [("cleanup_list", "cleanup_prune"), ("cleanup_prune", "cleanup_list")]
+)
+def test_one_cleanup_command_without_the_other_fails_naming_the_key_that_is_set(
+    tmp_path, key, other
+):
+    path = write(tmp_path, f"{REQUIRED}{key}=scripts/devices\n")
+
+    with pytest.raises(ConfigError) as error:
+        load(path)
+
+    assert str(error.value) == (
+        f"Ralph loop can't start: {path} sets {key} without {other}. Set both, or neither."
+    )
