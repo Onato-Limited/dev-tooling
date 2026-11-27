@@ -885,7 +885,8 @@ def test_a_red_main_audit_stops_the_loop_before_any_session_naming_the_run():
     assert session.worked == []
     assert stop == (
         "Ralph loop stopped: NEEDS_HUMAN: main's latest audit failed: "
-        "https://github.com/owner/repo/actions/runs/9. Deal with it, then re-run the audit."
+        "https://github.com/owner/repo/actions/runs/9. The loop starts again once main's newest "
+        "audit run is green (the next merged PR's, or a re-run of this one)."
     )
 
 
@@ -901,3 +902,26 @@ def test_an_open_policy_violation_issue_stops_the_loop_before_any_session_naming
         "Ralph loop stopped: NEEDS_HUMAN: policy-violation issue #12 is open. "
         "Close it once it's dealt with."
     )
+
+
+def test_a_red_audit_and_its_policy_violation_issue_are_named_together():
+    github = FakeGitHub([Issue(7, TODO)])
+    github.audit_failed = "https://github.com/owner/repo/actions/runs/9"
+    github.violations = [12]
+
+    stop = loop(github, FakeSession(github, {}))
+
+    assert stop.endswith(
+        "re-run of this one); policy-violation issue #12 is open. Close it once it's dealt with."
+    )
+
+
+def test_a_device_pruned_on_a_later_pass_is_not_listed_as_left_running():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: merged_run(40), 8: merged_run(41)})
+    devices = FakeDevices([7])
+    devices.fails_once = {7: "keeping device-7: leased to 'issue-7 bench'"}
+
+    stop = loop(github, session, devices=devices)
+
+    assert (devices.pruned, "Devices left running" in stop) == ([7], False)

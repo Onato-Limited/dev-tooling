@@ -218,18 +218,27 @@ class _Loop:
 
     def audit_hold(self) -> str | None:
         """Why `main` can't be trusted: it took a push that bypassed the policy."""
+        holds = []
         if url := self.github.failed_audit():
-            return f"main's latest audit failed: {url}. Deal with it, then re-run the audit"
+            # Most violations fail the same way on a re-run; a newer green run is what lifts it.
+            holds.append(
+                f"main's latest audit failed: {url}. The loop starts again once main's newest "
+                "audit run is green (the next merged PR's, or a re-run of this one)"
+            )
         if violations := self.github.policy_violations():
             named = ", ".join(f"#{n}" for n in violations)
-            return f"policy-violation issue {named} is open. Close it once it's dealt with"
-        return None
+            holds.append(f"policy-violation issue {named} is open. Close it once it's dealt with")
+        return "; ".join(holds) or None
 
     def prune_devices(self) -> None:
         """Each issue's device goes once the issue is closed, here or by hand."""
         for issue in self.devices.issues():
-            if not self.github.is_open(issue) and (failed := self.devices.prune(issue)):
-                self.left_running[issue] = failed
+            if self.github.is_open(issue):
+                continue
+            if failed := self.devices.prune(issue):
+                self.left_running[issue] = failed  # tried again next pass
+            else:
+                self.left_running.pop(issue, None)
 
     def approve_drafts(self) -> None:
         """Once the plan is approved, drafts go to Todo; one the owner holds in Attended stays."""

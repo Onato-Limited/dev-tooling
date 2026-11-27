@@ -589,7 +589,10 @@ def audit_run(conclusion, started_at="2026-11-27T08:00:00Z", run_id=9, name="mai
 
 
 def main_history(*commits):
-    nodes = [runs_commit(*runs)["commit"] for runs in commits]
+    nodes = [
+        {"statusCheckRollup": None} if runs is None else runs_commit(*runs)["commit"]
+        for runs in commits
+    ]
     return {"repository": {"defaultBranchRef": {"target": {"history": {"nodes": nodes}}}}}
 
 
@@ -608,8 +611,9 @@ def main_history(*commits):
             None,
         ),
         ([[run("lint", "SUCCESS", "2026-11-27T08:00:00Z")]], None),
+        ([None, [audit_run("FAILURE")]], "https://github.com/owner/repo/actions/runs/9"),
     ],
-    ids=["red", "green", "still running", "other checks", "re-run green", "no audit"],
+    ids=["red", "green", "still running", "other checks", "re-run green", "no audit", "no runs"],
 )
 def test_the_latest_completed_audit_run_on_main_names_its_url_when_it_failed(history, failed):
     gh = FakeGh(main_history(*history))

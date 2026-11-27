@@ -153,13 +153,14 @@ class FakeDevices:
     def __init__(self, issues=(), fails=None):
         self.held = list(issues)
         self.fails = fails or {}
+        self.fails_once = {}  # issue → why its first prune fails; a later one works
         self.pruned = []
 
     def issues(self):
         return list(self.held)
 
     def prune(self, issue):
-        if failed := self.fails.get(issue):
+        if failed := self.fails.get(issue) or self.fails_once.pop(issue, None):
             return failed
         self.pruned.append(issue)
         self.held.remove(issue)
