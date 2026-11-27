@@ -188,7 +188,8 @@ against the policy:
   was before the push, so a push can't drop the check it fails.
 
 GitHub lists at most 250 of a push's commits. A longer push is itself reported, and the listed
-commits are still checked.
+commits are still checked. A push that creates `main` has nothing before it to check against,
+so its run fails, saying so, and opens no issue.
 
 A failure opens a `policy-violation` issue assigned to `assignee`, and GitHub emails them. That
 matters when the push came from a bot. While that issue is open, later failures are added to it

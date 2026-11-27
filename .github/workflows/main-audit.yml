@@ -11,10 +11,8 @@ jobs:
   audit:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    # Pushes are audited one at a time, so two close together can't both open an issue.
-    concurrency:
-      group: main-audit-${{ github.repository }}
-      cancel-in-progress: false
+    # No concurrency group: GitHub keeps only one pending run per group, so pushes close together
+    # would go unaudited. Two failing at once can each open an issue; a duplicate is the lesser harm.
     permissions:
       contents: read
       pull-requests: read
@@ -38,19 +36,24 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .devtool
       - uses: astral-sh/setup-uv@v10.3.3
-      # As main was before the push, so the push can't drop the check it fails. A push that
-      # creates the branch has no before, so it reads the pushed commit's.
+      # As main was before the push, so the push can't drop the check it fails.
       - name: Read the required checks from before the push
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.event.after }}
         run: |
-          ref="$BEFORE"
-          if [ "$ref" = "0000000000000000000000000000000000000000" ]; then ref="$AFTER"; fi
-          gh api -H "Accept: application/vnd.github.raw" \
-            "repos/$GITHUB_REPOSITORY/contents/.github/required-checks?ref=$ref" \
-            > "$RUNNER_TEMP/required-checks"
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "main-audit: this push created main, so there is nothing before it to audit"
+            echo "  against. If main was deleted and pushed again, check its history by hand."
+            exit 1
+          fi
+          if ! gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/.github/required-checks?ref=$BEFORE" \
+            > "$RUNNER_TEMP/required-checks"; then
+            echo "main-audit: can't read .github/required-checks as main was at $BEFORE."
+            echo "  Add the file to main, listing the checks a PR must pass, one per line."
+            exit 1
+          fi
       - name: Audit the push
         env:
           GH_TOKEN: ${{ github.token }}
