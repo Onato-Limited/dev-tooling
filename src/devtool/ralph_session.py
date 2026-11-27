@@ -65,13 +65,15 @@ class Bot:
             "GIT_AUTHOR_EMAIL": email,
             "GIT_COMMITTER_NAME": self.login,
             "GIT_COMMITTER_EMAIL": email,
-            "GIT_CONFIG_COUNT": "3",
+            "GIT_CONFIG_COUNT": "4",
             "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
             "GIT_CONFIG_VALUE_0": "git@github.com:",
-            "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
-            "GIT_CONFIG_VALUE_1": "",
+            "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_1": "ssh://git@github.com/",
             "GIT_CONFIG_KEY_2": "credential.https://github.com.helper",
-            "GIT_CONFIG_VALUE_2": helper,
+            "GIT_CONFIG_VALUE_2": "",
+            "GIT_CONFIG_KEY_3": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_3": helper,
         }
 
 

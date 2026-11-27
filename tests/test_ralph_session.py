@@ -478,15 +478,34 @@ def test_the_session_commits_and_pushes_as_the_bot_not_the_owner(tmp_path):
         "GIT_COMMITTER_EMAIL": email,
         # The remote is SSH, which would push with the owner's key: go over HTTPS with the
         # token file's token, through git-credential-ralph.
-        "GIT_CONFIG_COUNT": "3",
+        "GIT_CONFIG_COUNT": "4",
         "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
         "GIT_CONFIG_VALUE_0": "git@github.com:",
-        "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
-        "GIT_CONFIG_VALUE_1": "",
+        "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+        "GIT_CONFIG_VALUE_1": "ssh://git@github.com/",
         "GIT_CONFIG_KEY_2": "credential.https://github.com.helper",
-        "GIT_CONFIG_VALUE_2": "ralph",
+        "GIT_CONFIG_VALUE_2": "",
+        "GIT_CONFIG_KEY_3": "credential.https://github.com.helper",
+        "GIT_CONFIG_VALUE_3": "ralph",
     }
     assert behind_session_bin(env["PATH"]) == "/usr/bin"
+
+
+@pytest.mark.parametrize("remote", ["git@github.com:o/r.git", "ssh://git@github.com/o/r.git"])
+def test_the_bot_fetches_and_pushes_over_https_however_the_ssh_remote_is_written(tmp_path, remote):
+    subprocess.run(["git", "init", "-q", tmp_path], check=True)
+    subprocess.run(["git", "-C", tmp_path, "remote", "add", "origin", remote], check=True)
+    env = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null", **Bot("a", 1).git_env()}
+
+    url = subprocess.run(
+        ["git", "-C", tmp_path, "ls-remote", "--get-url", "origin"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert url.stdout == "https://github.com/o/r.git\n"
 
 
 def test_the_improver_reviews_the_merged_prs_in_a_detached_worktree_of_main_then_removes_it(
