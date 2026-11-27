@@ -6,3 +6,4 @@ policy / size
 policy / protected-paths
 policy / required-checks
 policy / pr-shape
+policy / secrets
