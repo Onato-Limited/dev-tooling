@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import subprocess
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -74,10 +75,16 @@ def github_post(urlopen: Callable[[urllib.request.Request], IO[bytes]]) -> Post:
         try:
             with urlopen(request) as response:
                 return json.load(response)
+        except urllib.error.HTTPError as error:
+            raise TokenError(
+                f"Ralph loop can't get a GitHub token: POST {path}: HTTP {error.code} "
+                f"{error.reason}. Check app_id and installation_id in .ralph/config, and that the "
+                "keychain key is that app's."
+            ) from error
         except OSError as error:
             raise TokenError(
-                f"Ralph loop can't get a GitHub token: POST {path} failed: {error}. Check app_id "
-                "and installation_id in .ralph/config, and that the keychain key is that app's."
+                f"Ralph loop can't get a GitHub token: POST {path} didn't reach GitHub: {error}. "
+                "Check the network connection, then start the loop again."
             ) from error
 
     return post
