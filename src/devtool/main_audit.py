@@ -44,6 +44,8 @@ class Violation:
 
 
 LABEL = "policy-violation"
+# A push that creates the branch has no commit before it.
+CREATED = "0" * 40
 REFUSED_FIX = (
     "  The workflow's token needs `issues: write`, and read access to contents, pull requests, "
     "checks and statuses."
@@ -151,6 +153,10 @@ def main(argv: list[str], stdin: TextIO = sys.stdin, rest: Rest = gh_rest) -> in
     args = parser.parse_args(argv)
 
     event = json.loads(Path(args.event).read_text())
+    if event["before"] == CREATED:
+        print("main-audit: this push created main, so there is nothing before it to audit against.")
+        print("  If main was deleted and pushed again, check its history by hand.")
+        return 1
     required = parse_required(Path(args.required_checks).read_text())
     try:
         violations = audit(gather(args.repo, event, rest), required)

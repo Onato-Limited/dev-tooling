@@ -38,17 +38,14 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .devtool
       - uses: astral-sh/setup-uv@v10.3.3
-      # As main was before the push, so the push can't drop the check it fails.
+      # As main was before the push, so the push can't drop the check it fails. A push that
+      # created main has no before; the audit step reports that.
       - name: Read the required checks from before the push
+        if: github.event.before != '0000000000000000000000000000000000000000'
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            echo "main-audit: this push created main, so there is nothing before it to audit"
-            echo "  against. If main was deleted and pushed again, check its history by hand."
-            exit 1
-          fi
           if ! gh api -H "Accept: application/vnd.github.raw" \
             "repos/$GITHUB_REPOSITORY/contents/.github/required-checks?ref=$BEFORE" \
             > "$RUNNER_TEMP/required-checks"; then

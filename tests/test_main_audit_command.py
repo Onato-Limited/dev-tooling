@@ -214,3 +214,21 @@ def test_a_violation_while_one_is_open_comments_on_it_instead(capsys, tmp_path):
         ("POST", "repos/o/r/issues/30/comments", {"body": f"Another push:\n\n{ALARM}"}),
     ]
     assert capsys.readouterr().out == f"{ALARM}\nmain-audit: commented on #30.\n"
+
+
+def test_a_push_that_created_main_is_not_audited_and_says_why(capsys, tmp_path):
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"forced": False, "before": "0" * 40, "after": "ccc3333"}))
+    # The workflow skips reading the required checks for this push, so there is no file.
+    argv = ["--repo", "o/r", "--event", str(event), "--required-checks", str(tmp_path / "none")]
+    argv += ["--assignee", "owner", "--run-url", RUN_URL]
+    github = FakeGitHub([])
+
+    code = main(argv, stdin=io.StringIO(), rest=github.rest)
+
+    assert code == 1
+    assert capsys.readouterr().out == (
+        "main-audit: this push created main, so there is nothing before it to audit against.\n"
+        "  If main was deleted and pushed again, check its history by hand.\n"
+    )
+    assert github.calls == []
