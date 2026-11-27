@@ -1,0 +1,19 @@
+name: claude
+on:
+  pull_request:
+    # edited: the review reads the PR body, so a body written after the push needs a fresh review.
+    types: [opened, synchronize, reopened, edited]
+permissions: {}
+jobs:
+  claude:
+    # @v1, not ./: a PR that changes the reviewer is still reviewed by the released one.
+    uses: Onato-Limited/dev-tooling/.github/workflows/claude-review.yml@v1
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      effort: high
