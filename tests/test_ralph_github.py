@@ -312,6 +312,7 @@ def test_pull_request_names_its_branch():
         ("BLOCKED", [commit(ci="SUCCESS", claude_review="FAILURE")], False),
         ("BLOCKED", [commit(ci="SUCCESS"), commit()], False),
         ("CLEAN", [commit(ci="SUCCESS", claude_review="SUCCESS")], False),
+        ("BLOCKED", [commit(ci="SKIPPED", lint="NEUTRAL", claude_review="SUCCESS")], True),
     ],
 )
 def test_a_pull_request_says_whether_github_blocks_it_once_every_check_passed(state, commits, held):

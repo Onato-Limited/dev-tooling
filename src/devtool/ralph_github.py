@@ -4,7 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable
 
-from devtool.merge_decision import RETRO_HEADING
+from devtool.merge_decision import GREEN, RETRO_HEADING
 from devtool.ralph import GitHubError, Issue, PullRequest
 
 Run = Callable[[list[str], str | None], str]
@@ -177,8 +177,8 @@ def check_runs(commit: dict) -> dict[str, str]:
 
 
 def all_passed(runs: dict[str, str]) -> bool:
-    """Whether a commit has check runs and each one's latest run succeeded."""
-    return bool(runs) and all(conclusion == SUCCESS for conclusion in runs.values())
+    """Whether a commit has check runs and each one's newest run passed (or was skipped)."""
+    return bool(runs) and all(conclusion in GREEN for conclusion in runs.values())
 
 
 def trailing_failures(conclusions: list[str]) -> int:
