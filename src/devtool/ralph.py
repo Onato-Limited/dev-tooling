@@ -8,6 +8,7 @@ TODO, IN_PROGRESS, IN_REVIEW, DONE = "Todo", "In progress", "In review", "Done"
 # The owner works these issues themselves; the loop never takes one.
 ATTENDED = "Attended"
 STUCK_AFTER = 3
+IMPROVE_AFTER = 5  # merged PRs between improver passes
 POLL_SECONDS = 60
 MERGE_TIMEOUT = 3600
 # The board only stays true while these GitHub Projects built-in workflows move the cards.
@@ -150,8 +151,11 @@ def run(
     clock: Callable[[], float],
     sleep: Callable[[float], None],
     max_iterations: int,
+    *,
+    improves: bool,
 ) -> str:
-    message = _Loop(milestone, github, session, notify, clock, sleep, max_iterations).run()
+    loop = _Loop(milestone, github, session, notify, clock, sleep, max_iterations, improves)
+    message = loop.run()
     notify(message)
     return message
 
@@ -172,7 +176,10 @@ class _Loop:
     clock: Callable[[], float]
     sleep: Callable[[float], None]
     max_iterations: int
+    improves: bool  # the project has an improver prompt
     iterations: int = 0
+    merged: list[int] = field(default_factory=list)  # since the last improver pass
+    improvements: list[Improvement] = field(default_factory=list)
     opened: list[int] = field(default_factory=list)
     # This run's open PRs → each one's issue, or None for a session's other PRs.
     pending: dict[int, int | None] = field(default_factory=dict)
@@ -190,6 +197,7 @@ class _Loop:
                 f"Ralph loop stopped: board workflows are off: {', '.join(off)}. "
                 "Turn them on in the project's Workflows settings."
             )
+        self.approve_drafts()
         while True:
             issues = self.github.milestone_issues(self.milestone)
             self.move_closed_to_done(issues)
@@ -197,15 +205,44 @@ class _Loop:
             if (stop := self.step(next_issue(issues))) is not None:
                 return self.stop_message(stop.headline)
 
+    def approve_drafts(self) -> None:
+        """Once the plan is approved, drafts go to Todo; one the owner holds in Attended stays."""
+        drafts = [i for i in self.github.milestone_issues(self.milestone) if i.draft and i.is_open]
+        if not drafts or not self.github.plan_approved(self.milestone):
+            return
+        for draft in drafts:
+            self.github.undraft(draft.number)
+            if draft.status != ATTENDED:
+                self.github.set_status(draft.number, TODO)
+
     def step(self, issue: Issue | None) -> Stop | None:
         self.refresh_pending()
-        if issue is None:
-            return self.wait_for_merges(Stop())
-        if halt := self.halt():
+        halt = None if issue is None else self.halt()
+        if issue is None or halt:
             # No more sessions, but the open PRs still need merging before the loop stops.
-            return self.wait_for_merges(Stop(halt))
+            stop = self.wait_for_merges(Stop(halt))
+            if stop == Stop(halt) and self.merged and self.improves:  # merged, not timed out
+                self.improve()
+                return None  # its PRs need merging before the loop stops
+            return stop
+        if self.improves and len(self.merged) >= IMPROVE_AFTER:
+            self.improve()
+            return None
         self.work(issue)
         return None
+
+    def improve(self) -> None:
+        self.waiting_since = None  # its PRs get their own hour, as a session's do
+        prs, self.merged = tuple(self.merged), []
+        improvement = self.session.improve(prs, self.update_behind_pending)
+        self.improvements.append(improvement)
+        for number in improvement.prs:
+            if not self.github.pull_request(number).merged:
+                self.wait_on(number, None)
+        for proposal in improvement.proposals:
+            self.notify(f"Ralph loop: the improver proposes #{proposal}; it needs your decision.")
+        if improvement.needs_human:
+            self.notify(f"Ralph loop: the improver needs you: {improvement.needs_human}.")
 
     def halt(self) -> str | None:
         if self.iterations == self.max_iterations:
@@ -215,7 +252,11 @@ class _Loop:
     def refresh_pending(self) -> None:
         prs = [self.github.pull_request(n) for n in self.pending]
         for pr in prs:
-            if pr.merged and (issue := self.pending.pop(pr.number)) is not None:
+            if not pr.merged:
+                continue
+            if pr.number in self.opened:  # the improver's own PRs aren't reviewed again
+                self.merged.append(pr.number)
+            if (issue := self.pending.pop(pr.number)) is not None:
                 self.remove_worktree(issue)
         self.update_behind(prs)
         self.drop_held(prs)
@@ -262,9 +303,12 @@ class _Loop:
         self.github.arrange_merge(pr)
         self.pending[pr] = issue
 
-    def remove_worktree(self, issue: int) -> None:
+    def remove_worktree(self, issue: int) -> bool:
+        """Whether the issue's worktree and branch are gone; what kept them is reported."""
         if failed := self.session.remove(issue):
             self.left_in_place[issue] = failed
+            return False
+        return True
 
     def move_closed_to_done(self, issues: list[Issue]) -> None:
         for closed in [i for i in issues if not i.is_open and i.status != DONE]:
@@ -275,7 +319,7 @@ class _Loop:
         """Moves back to Todo each In-review issue nothing holds; the ones stuck this run stay."""
         released = []
         for issue in issues:
-            if self.nothing_holds(issue) and self.cleared(issue.number):
+            if self.nothing_holds(issue) and self.remove_worktree(issue.number):
                 self.github.set_status(issue.number, TODO)
                 self.github.comment(
                     issue.number, "Moved back to Todo by the Ralph loop: nothing holds it any more."
@@ -283,13 +327,6 @@ class _Loop:
                 issue = replace(issue, status=TODO)
             released.append(issue)
         return released
-
-    def cleared(self, issue: int) -> bool:
-        """Whether the issue's leftover worktree and branch are gone, so a session can start."""
-        if failed := self.session.remove(issue):
-            self.left_in_place[issue] = failed
-            return False
-        return True
 
     def nothing_holds(self, issue: Issue) -> bool:
         return (
@@ -325,17 +362,24 @@ class _Loop:
         if reason := stuck_reason(outcome, pr):
             self.needs_owner(issue.number, reason)  # its PRs, and any others, are the owner's
             return
+        merged_others = []
         for other in outcome.also:
-            if not self.github.pull_request(other).merged:
+            if self.github.pull_request(other).merged:
+                merged_others.append(other)
+            else:
                 self.wait_on(other, None)
         if pr.merged:  # without a PR, stuck_reason gave a reason
+            self.merged.append(pr.number)
             self.remove_worktree(issue.number)
         else:
             self.wait_on(pr.number, issue.number)
+        self.merged += merged_others
 
     def stop_message(self, headline: str | None) -> str:
         still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
-        if headline is None:
+        if headline is None and still_open and all(i.draft for i in still_open):
+            headline = f"drafts wait for the owner's plan-approved label on #{self.milestone}"
+        elif headline is None:
             headline = "nothing left to take" if still_open else "milestone complete"
         lines = [f"Ralph loop stopped: {headline}."]
         if still_open:
@@ -362,4 +406,20 @@ class _Loop:
             lines += ["Not brought up to date:", *(f"- {r}" for r in self.not_brought_up_to_date)]
         if self.held_by_threads:
             lines += ["Held by review threads:", *(f"- {r}" for r in self.held_by_threads)]
-        return "\n".join(lines)
+        return "\n".join(lines + self.improver_lines())
+
+    def improver_lines(self) -> list[str]:
+        prs = [n for i in self.improvements for n in i.prs]
+        proposals = [n for i in self.improvements for n in i.proposals]
+        lines = ["Improver PRs: " + ", ".join(f"PR #{n}" for n in prs)] if prs else []
+        if proposals:
+            lines.append("Improver proposals: " + ", ".join(f"#{n}" for n in proposals))
+        lines += [
+            f"Improver needs you: {i.needs_human}" for i in self.improvements if i.needs_human
+        ]
+        lines += [
+            f"Improver worktree left in place: {i.left_in_place}"
+            for i in self.improvements
+            if i.left_in_place
+        ]
+        return lines
