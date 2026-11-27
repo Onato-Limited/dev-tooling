@@ -4,10 +4,12 @@ import pytest
 from ralph_fakes import Clock, FakeGitHub, FakeSession
 
 from devtool.ralph import (
+    ATTENDED,
     DONE,
     IN_PROGRESS,
     IN_REVIEW,
     TODO,
+    Improvement,
     Issue,
     Outcome,
     PullRequest,
@@ -15,10 +17,12 @@ from devtool.ralph import (
 )
 
 
-def loop(github, session, notes=None, clock=None, max_iterations=10):
+def loop(github, session, notes=None, clock=None, max_iterations=10, improves=False):
     notes = [] if notes is None else notes
     clock = clock or Clock()
-    return run(2, github, session, notes.append, clock, clock.sleep, max_iterations)
+    return run(
+        2, github, session, notes.append, clock, clock.sleep, max_iterations, improves=improves
+    )
 
 
 def merged_run(pr):
@@ -592,3 +596,155 @@ def test_a_pr_that_merged_while_it_still_reads_as_behind_is_not_updated():
     stop = loop(github, session, clock=clock)
 
     assert (github.updates, stop) == ([], "Ralph loop stopped: milestone complete.")
+
+
+def test_other_prs_a_session_merged_are_given_to_the_improver():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[126] = PullRequest(number=126, merged=True)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(126,)), PullRequest(130), False)})
+
+    loop(github, session, improves=True)
+
+    assert session.improved == [((130, 126), 1)]
+
+
+def test_after_five_merged_prs_an_improver_session_runs_before_the_next_issue():
+    github = FakeGitHub([Issue(n, TODO) for n in range(1, 8)])
+    session = FakeSession(github, {n: merged_run(40 + n) for n in range(1, 8)})
+
+    loop(github, session, improves=True)
+
+    assert session.worked == [1, 2, 3, 4, 5, 6, 7]
+    assert session.improved[0] == ((41, 42, 43, 44, 45), 5)
+
+
+def test_a_pending_pr_that_falls_behind_while_the_improver_runs_is_updated_before_it_ends():
+    github = FakeGitHub([Issue(n, TODO) for n in range(1, 8)])
+    session = FakeSession(
+        github, {1: pending_run(41), **{n: merged_run(40 + n) for n in range(2, 8)}}
+    )
+    session.while_running = {
+        "improve": lambda: github.prs.update({41: PullRequest(41, behind=True)})
+    }
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(1, 41)
+
+    loop(github, session, clock=clock, improves=True)
+
+    assert session.updates_at_end["improve"][0] == [41]
+
+
+def test_with_nothing_left_to_take_an_improver_reviews_the_rest_before_the_loop_stops():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)], blocked_by={8: (7,)})
+    session = FakeSession(github, {7: pending_run(40), 8: merged_run(41)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(7, 40)
+
+    stop = loop(github, session, clock=clock, improves=True)
+
+    assert session.improved == [((40, 41), 2)]
+    assert stop == "Ralph loop stopped: milestone complete."
+
+
+def test_the_improvers_prs_and_proposals_are_reported_and_each_proposal_messages_the_owner():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: merged_run(40)})
+    session.improvement = Improvement(prs=(50,), proposals=(51, 52))
+    notes = []
+
+    stop = loop(github, session, notes, improves=True)
+
+    assert notes == [
+        "Ralph loop: the improver proposes #51; it needs your decision.",
+        "Ralph loop: the improver proposes #52; it needs your decision.",
+        stop,
+    ]
+    assert stop == (
+        "Ralph loop stopped: milestone complete.\n"
+        "Improver PRs: PR #50\n"
+        "Improver proposals: #51, #52"
+    )
+
+
+def test_an_improver_that_needs_the_owner_messages_them_and_the_loop_goes_on():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: merged_run(40)})
+    session.improvement = Improvement(needs_human="git fetch origin failed: offline")
+    notes = []
+
+    stop = loop(github, session, notes, improves=True)
+
+    assert notes[0] == "Ralph loop: the improver needs you: git fetch origin failed: offline."
+    assert stop.endswith("\nImprover needs you: git fetch origin failed: offline")
+
+
+def test_an_improver_worktree_left_in_place_is_listed_in_the_stop_message():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: merged_run(40)})
+    session.improvement = Improvement(left_in_place="git worktree remove failed: modified files")
+
+    stop = loop(github, session, improves=True)
+
+    assert stop.endswith(
+        "\nImprover worktree left in place: git worktree remove failed: modified files"
+    )
+
+
+def test_once_the_owner_approves_the_plan_the_drafts_move_to_todo_and_are_taken():
+    github = FakeGitHub([Issue(7, "No status", draft=True), Issue(8, TODO, draft=True)])
+    github.approved = True
+    session = FakeSession(github, {7: merged_run(40), 8: merged_run(41)})
+
+    loop(github, session)
+
+    assert github.undrafted == [7, 8]
+    assert github.moves[:2] == [(7, TODO), (8, TODO)]
+    assert session.worked == [7, 8]
+
+
+def test_with_only_drafts_left_the_stop_message_asks_for_plan_approved_on_the_parent():
+    github = FakeGitHub([Issue(7, TODO, draft=True), Issue(8, TODO, draft=True)])
+    session = FakeSession(github, {})
+
+    stop = loop(github, session)
+
+    assert stop == (
+        "Ralph loop stopped: drafts wait for the owner's plan-approved label on #2.\n"
+        "Open:\n"
+        "- #7 Todo, draft\n"
+        "- #8 Todo, draft"
+    )
+
+
+def test_without_an_improve_prompt_no_improver_runs():
+    github = FakeGitHub([Issue(n, TODO) for n in range(1, 7)])
+    session = FakeSession(github, {n: merged_run(40 + n) for n in range(1, 7)})
+
+    loop(github, session)
+
+    assert (session.worked, session.improved) == ([1, 2, 3, 4, 5, 6], [])
+
+
+def test_an_approved_draft_the_owner_holds_in_attended_is_undrafted_but_stays_attended():
+    github = FakeGitHub([Issue(7, ATTENDED, draft=True), Issue(8, TODO, draft=True)])
+    github.approved = True
+    session = FakeSession(github, {8: merged_run(41)})
+
+    loop(github, session)
+
+    assert github.undrafted == [7, 8]
+    assert (7, TODO) not in github.moves
+    assert session.worked == [8]
+
+
+def test_the_improvers_open_pr_is_merged_like_any_other_and_not_reviewed_again():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: merged_run(40)})
+    session.improvement = Improvement(prs=(50,))
+    session.improver_merges = False
+    clock = Clock()
+    clock.on_sleep = lambda: github.prs.update({50: PullRequest(50, merged=True)})
+
+    loop(github, session, clock=clock, improves=True)
+
+    assert (github.arranged, clock.sleeps, session.improved) == ([50], [60], [((40,), 1)])

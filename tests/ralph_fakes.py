@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from devtool.ralph import REQUIRED_WORKFLOWS, GitHubError
+from devtool.ralph import REQUIRED_WORKFLOWS, GitHubError, Improvement, PullRequest
 
 
 class FakeGitHub:
@@ -19,6 +19,8 @@ class FakeGitHub:
         self.updates = []  # PRs brought up to date with main, in order
         self.pr_fails = []  # errors the next PR reads raise, one each
         self.arranged = []  # PRs whose merge the loop arranged, in order
+        self.approved = False  # the owner's plan-approved label on the milestone's parent
+        self.undrafted = []
 
     def board_workflows(self):
         return self.workflows
@@ -43,6 +45,14 @@ class FakeGitHub:
 
     def has_open_pr(self, issue):
         return issue in self.open_prs
+
+    def plan_approved(self, parent):
+        assert parent == 2
+        return self.approved
+
+    def undraft(self, issue):
+        self.undrafted.append(issue)
+        self.issues[issue] = replace(self.issues[issue], draft=False)
 
     def set_status(self, issue, status):
         self.moves.append((issue, status))
@@ -69,7 +79,11 @@ class FakeSession:
         self.removal_fails = {}  # issue → what failed
         self.while_running = {}  # issue → what happens on GitHub while its session runs
         self.update_fails = {}  # PR → why it couldn't be brought up to date
-        self.updates_at_end = {}  # issue → the PRs updated by the time its session ended
+        # issue → the PRs updated by the time its session ended; "improve" → one list per run
+        self.updates_at_end = {}
+        self.improved = []  # (the PRs it was given, how many issues had been worked by then)
+        self.improvement = Improvement()
+        self.improver_merges = True  # whether the improver's PRs merge at once
 
     def remove(self, issue):
         self.removed.append(issue)
@@ -81,6 +95,15 @@ class FakeSession:
         self.github.updates.append(pr.number)
         self.github.prs[pr.number] = replace(pr, behind=False)
         return None
+
+    def improve(self, prs, while_running):
+        self.improved.append((prs, len(self.worked)))
+        self.while_running.pop("improve", lambda: None)()
+        while_running()
+        self.updates_at_end.setdefault("improve", []).append(list(self.github.updates))
+        for number in self.improvement.prs:
+            self.github.prs[number] = PullRequest(number=number, merged=self.improver_merges)
+        return self.improvement
 
     def work(self, issue, while_running):
         self.worked.append(issue.number)
