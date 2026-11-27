@@ -37,14 +37,15 @@ class ClaudeSession:
         return outcome(text)
 
     def _open_worktree(self, worktree: Path, branch: str) -> tuple[bool, str | None]:
-        """Whether the issue's branch was still there, and what failed, if its worktree couldn't
-        be had. A worktree still there is reused; else one is added on the branch, locally or on
-        `origin` (git checks the remote one out as a tracking branch), else on a new branch cut
-        from `origin/main`."""
-        failed = self._git(["fetch", "origin"])
-        resuming = not failed and self._has_branch(branch)
-        if failed or worktree.exists():
-            return resuming, failed
+        """Whether an earlier session's worktree or branch is still there, and what failed, if the
+        worktree couldn't be had. A worktree still there is reused; else one is added on the
+        branch, locally or on `origin` (git checks the remote one out as a tracking branch), else
+        on a new branch cut from `origin/main`."""
+        if failed := self._git(["fetch", "origin"]):
+            return False, failed
+        if worktree.exists():
+            return True, None
+        resuming = self._has_branch(branch)
         start = [branch] if resuming else ["-b", branch, "origin/main"]
         return resuming, self._git(["worktree", "add", str(worktree), *start])
 
@@ -79,12 +80,11 @@ class ClaudeSession:
     def _worktree(self, issue: int) -> Path:
         return self.repo.parent / f"{self.repo.name}-{issue}"
 
-    def _git(self, *steps: list[str]) -> str | None:
-        """What failed, stopping at the first step to fail, or None once all have run."""
-        for step in steps:
-            done = self.run(["git", "-C", str(self.repo), *step], capture_output=True, text=True)
-            if done.returncode != 0:
-                return f"git {' '.join(step[:2])} failed: {done.stderr.strip()}"
+    def _git(self, step: list[str]) -> str | None:
+        """What failed, or None if it ran."""
+        done = self.run(["git", "-C", str(self.repo), *step], capture_output=True, text=True)
+        if done.returncode != 0:
+            return f"git {' '.join(step[:2])} failed: {done.stderr.strip()}"
         return None
 
     def _claude(
@@ -122,8 +122,15 @@ def own_environ(environ: dict[str, str]) -> dict[str, str]:
 
 
 def final_result(log: Path) -> str | None:
-    events = [json.loads(line) for line in log.read_text().splitlines() if line.startswith("{")]
-    return next((e["result"] for e in reversed(events) if e.get("type") == "result"), None)
+    """The last result's text; stderr shares the log, and a killed session cuts its last line."""
+    for line in reversed([line for line in log.read_text().splitlines() if line[:1] == "{"]):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "result":
+            return event.get("result")
+    return None
 
 
 def outcome(text: str) -> Outcome:

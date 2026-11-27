@@ -2,13 +2,15 @@ import json
 import subprocess
 from datetime import datetime
 
+import pytest
+
 from devtool.ralph import POLL_SECONDS, Issue, Outcome
 from devtool.ralph_session import ClaudeSession
 
 
 class FakeProcesses:
-    """Records each command; `claude` streams `events` to its stdout and exits with `exit`
-    after `polls` waits have timed out."""
+    """Records each command; `claude` streams `events` (a string as a raw line) to its stdout
+    and exits with `exit` after `polls` waits have timed out."""
 
     def __init__(self, *events, exit=0, polls=0):
         self.events = events
@@ -23,7 +25,7 @@ class FakeProcesses:
     def start(self, args, **kwargs):
         self.calls.append((args, kwargs))
         for event in self.events:
-            kwargs["stdout"].write(json.dumps(event) + "\n")
+            kwargs["stdout"].write((event if isinstance(event, str) else json.dumps(event)) + "\n")
         return FakeProcess(self, kwargs)
 
     def __call__(self, args, **kwargs):
@@ -82,40 +84,15 @@ def test_a_session_runs_claude_on_the_issue_in_its_own_worktree_and_logs_the_str
 
     worktree = tmp_path / "checkout-7"
     assert outcome == Outcome(pr=52)
-    assert [args for args, _ in processes.calls[:3]] == [
-        ["git", "-C", str(repo), "fetch", "origin"],
-        [
-            "git",
-            "-C",
-            str(repo),
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/heads/someone/7-ralph",
-            "refs/remotes/origin/someone/7-ralph",
-        ],
-        [
-            "git",
-            "-C",
-            str(repo),
-            "worktree",
-            "add",
-            str(worktree),
-            "-b",
-            "someone/7-ralph",
-            "origin/main",
-        ],
+    assert [" ".join(args) for args, _ in processes.calls[:3]] == [
+        f"git -C {repo} fetch origin",
+        f"git -C {repo} for-each-ref --format=%(refname) refs/heads/someone/7-ralph"
+        " refs/remotes/origin/someone/7-ralph",
+        f"git -C {repo} worktree add {worktree} -b someone/7-ralph origin/main",
     ]
     args, kwargs = processes.claude()
-    assert args == [
-        "claude",
-        "-p",
-        "Work on issue #7 on branch someone/7-ralph.\n",
-        "--permission-mode",
-        "auto",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-    ]
+    assert args[:3] == ["claude", "-p", "Work on issue #7 on branch someone/7-ralph.\n"]
+    assert " ".join(args[3:]) == "--permission-mode auto --output-format stream-json --verbose"
     assert kwargs["cwd"] == worktree
     log = repo / ".ralph" / "logs" / "20261123-010203-7.log"
     assert log.read_text().splitlines()[-1] == json.dumps(result("Opened it.\nPR: #52"))
@@ -132,7 +109,9 @@ def test_an_issue_whose_worktree_is_still_there_is_resumed_in_it_without_adding_
     assert outcome == Outcome(pr=52)
     adds = [args for args, _ in processes.calls if args[3:5] == ["worktree", "add"]]
     assert adds == []
-    assert processes.claude()[1]["cwd"] == worktree
+    args, kwargs = processes.claude()
+    assert kwargs["cwd"] == worktree
+    assert "\nResuming: an earlier session left branch `someone/7-ralph`" in args[2]
 
 
 def test_a_session_on_a_branch_still_there_is_told_it_resumes_and_where_the_ruling_is(tmp_path):
@@ -255,3 +234,15 @@ def test_a_fetch_that_fails_needs_a_human_and_starts_no_claude(tmp_path):
         " Could not resolve host",
     )
     assert [args[3] for args, _ in processes.calls] == ["fetch"]
+
+
+@pytest.mark.parametrize(
+    "last", [{"type": "result", "subtype": "error_max_turns"}, '{"type": "assistant", "mess']
+)
+def test_a_result_without_text_or_a_cut_off_line_is_a_session_without_a_result(tmp_path, last):
+    repo, claude = session(tmp_path, FakeProcesses(last))
+
+    outcome = claude.work(Issue(9, "In progress"), nothing)
+
+    log = repo / ".ralph" / "logs" / "20261123-010203-9.log"
+    assert outcome == Outcome(pr=None, needs_human=f"the session ended without a result; see {log}")
