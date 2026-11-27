@@ -83,8 +83,9 @@ jobs:
 The rules come from the PR's **base branch**, so a PR can't loosen the rules it is reviewed
 against: `standards` (required), `CLAUDE.md`, `spec` and `REVIEW.md` when present, and any file
 `REVIEW.md` includes with a line that is only `@<path>`. The review makes a Standards pass over
-the diff and PR body, and a Spec pass against the issue the PR closes and the spec. If your rules
-define a format for findings, the review uses it.
+the diff and PR body, and a Spec pass against the issue the PR closes and the spec. Every inline
+finding starts with a label, `[Standards]` or `[Spec]` then `hard:` or `judgement:`, which review
+threads reads. If your rules define a format for findings, the review uses it after the label.
 
 | Input | Default | |
 |---|---|---|
@@ -106,8 +107,13 @@ so give them a person's review instead.
 
 ## Review threads
 
-Fails while the PR has an unresolved review thread, outdated ones included, and lists each one.
-It needs no secret and runs no Claude. Shown on the PR as `<your job> / threads`.
+Fails while the PR has a review thread that blocks it, outdated ones included, and lists each
+one. It needs no secret and runs no Claude. Shown on the PR as `<your job> / threads`.
+
+- A hard finding, and every person's thread, blocks until it's resolved.
+- A judgement finding from the Claude review (its first line starts `[Standards] judgement:` or
+  `[Spec] judgement:`) can be taken or left. It blocks only until someone other than the reviewer
+  replies saying which, and why. It can stay open after that, and the log lists it as answered.
 
 Call it from its own workflow, not the Claude review's: review events there would create skipped
 review runs, and a skipped run counts as passing.
@@ -133,7 +139,7 @@ last one, re-run the failed job.
 For repos without auto-merge (private repos on GitHub Free). It squash-merges a PR labelled
 `merge-when-green` once all of these hold:
 - every check in the default branch's `.github/required-checks` is green on the head;
-- no review thread is unresolved;
+- no review thread blocks it, as review-threads decides;
 - the PR has a `## Retro notes` comment, when `require-retro-notes` is on;
 - the branch is up to date with its base. If it's behind, the workflow updates the branch and
   merges on a later run, once the checks pass again.

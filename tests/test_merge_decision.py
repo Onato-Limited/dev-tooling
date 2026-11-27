@@ -16,7 +16,7 @@ def green_pr(**changes):
         mergeable="MERGEABLE",
         behind=False,
         checks={"lint": "SUCCESS", "policy / size": "SUCCESS"},
-        unresolved_threads=0,
+        blocking_threads=0,
         comments=[],
     )
     return replace(pr, **changes)
@@ -54,9 +54,9 @@ def test_neutral_and_skipped_checks_pass_as_branch_protection_counts_them():
 
 
 def test_an_unresolved_review_thread_waits_with_the_count():
-    decision = merge_decision(green_pr(unresolved_threads=2), REQUIRED, retro_required=False)
+    decision = merge_decision(green_pr(blocking_threads=2), REQUIRED, retro_required=False)
 
-    assert decision == Wait("2 unresolved review threads")
+    assert decision == Wait("2 blocking review threads")
 
 
 def test_required_retro_notes_missing_waits():

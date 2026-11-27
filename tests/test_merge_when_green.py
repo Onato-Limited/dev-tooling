@@ -10,9 +10,10 @@ from devtool.review_threads import QueryError
 class FakeGitHub:
     """GitHub as merge-when-green reads it: labelled PRs, their threads, comparisons and calls."""
 
-    def __init__(self, prs=(), unresolved=None, behind_by=None, fail=None):
+    def __init__(self, prs=(), unresolved=None, behind_by=None, fail=None, threads=None):
         self.prs = list(prs)
         self.unresolved = unresolved or {}
+        self.threads = threads or {}
         self.behind_by = behind_by or {}
         self.fail = fail or {}
         self.calls = []
@@ -20,7 +21,8 @@ class FakeGitHub:
     def query(self, text, variables):
         if "reviewThreads" in text:
             count = self.unresolved.get(variables["number"], 0)
-            nodes = [{"isResolved": False}] * count
+            nodes = [review_thread("onato", "Why?")] * count
+            nodes += self.threads.get(variables["number"], [])
             page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
             return {"repository": {"pullRequest": {"reviewThreads": page}}}
         self.calls.append(("query", variables))
@@ -38,6 +40,17 @@ class FakeGitHub:
         if method == "GET":
             return {"behind_by": self.behind_by.get(path, 0)}
         return {}
+
+
+def person(login):
+    return {"__typename": "Bot" if login == "claude" else "User", "login": login}
+
+
+def review_thread(author, body, *replies):
+    """An unresolved review thread: its first comment and any replies, as (login, body) pairs."""
+    comments = [(author, body), *replies]
+    nodes = [{"author": person(who), "body": text, "url": "u"} for who, text in comments]
+    return {"isResolved": False, "comments": {"nodes": nodes}}
 
 
 def check_run(name, conclusion="success", status="completed", started="2026-11-27T01:00:00Z"):
@@ -184,7 +197,21 @@ def test_unresolved_review_threads_are_counted(capsys, tmp_path):
 
     run(github, tmp_path=tmp_path)
 
-    assert capsys.readouterr().out == "#12 waits: 2 unresolved review threads\n"
+    assert capsys.readouterr().out == "#12 waits: 2 blocking review threads\n"
+
+
+def test_an_answered_judgement_thread_does_not_hold_up_the_merge(capsys, tmp_path):
+    answered = review_thread("claude", "[Spec] judgement: maybe", ("onato", "Leaving it: …"))
+    unanswered = review_thread("claude", "[Spec] judgement: maybe")
+    github = FakeGitHub(
+        [pr_node(), pr_node(number=13, sha="def456")], threads={12: [answered], 13: [unanswered]}
+    )
+
+    run(github, tmp_path=tmp_path)
+
+    assert capsys.readouterr().out == (
+        "#12 merged: feat: a thing (#12)\n#13 waits: 1 blocking review threads\n"
+    )
 
 
 def test_a_head_with_no_checks_at_all_waits_for_them(capsys, tmp_path):
