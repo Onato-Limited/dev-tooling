@@ -1,7 +1,10 @@
 import io
+import subprocess
 import textwrap
 
-from devtool.required_checks import main, parse_required
+import pytest
+
+from devtool.required_checks import FetchError, gh_fetch, main, parse_required
 
 CI = """
 on:
@@ -25,8 +28,12 @@ def repo(tmp_path, required, **workflows):
     return ["--root", str(tmp_path)]
 
 
-def run(argv):
-    return main(argv, stdin=io.StringIO())
+def no_fetch(repository, path, ref):
+    raise AssertionError(f"unexpected fetch of {repository}/{path}@{ref}")
+
+
+def run(argv, fetch=no_fetch):
+    return main(argv, stdin=io.StringIO(), fetch=fetch)
 
 
 def test_the_file_parses_into_names_one_per_line_ignoring_comments_and_blank_lines():
@@ -137,13 +144,25 @@ jobs:
 """
 
 
-def test_a_job_calling_a_workflow_in_another_repo_matches_any_called_job_loosely(tmp_path, capsys):
-    argv = repo(tmp_path, "policy / size\n", pr=CALLS_REMOTE)
+def test_a_workflow_in_another_repo_is_fetched_at_its_ref_and_its_jobs_matched_exactly(
+    tmp_path, capsys
+):
+    fetched = []
 
-    code = run(argv)
+    def fetch(repository, path, ref):
+        fetched.append((repository, path, ref))
+        return POLICY
 
-    assert code == 0
-    assert capsys.readouterr().out.splitlines()[-1] == "  policy / size ~ policy / …"
+    argv = repo(tmp_path, "policy / Protected paths\npolicy / sise\n", pr=CALLS_REMOTE)
+
+    code = run(argv, fetch=fetch)
+
+    assert code == 1
+    assert fetched == [("some-org/tools", ".github/workflows/pr-policy.yml", "v1")]
+    assert capsys.readouterr().out.splitlines()[:2] == [
+        "policy / sise: matches no job that runs on pull requests.",
+        "Checks that exist: policy / Protected paths, policy / size",
+    ]
 
 
 def test_a_missing_required_checks_file_fails_with_the_fix(tmp_path, capsys):
@@ -183,8 +202,77 @@ def test_names_only_known_when_a_job_runs_match_loosely_and_say_so(tmp_path, cap
     assert code == 0
     assert capsys.readouterr().out == (
         "All 2 required checks match a job that runs on PRs.\n"
-        "Matched loosely, since these names are only known when the job runs, "
-        "or come from a workflow in another repo:\n"
+        "Matched loosely, since these names are only known when the job runs:\n"
         "  test (3.12) ~ test (…)\n"
         "  Build ubuntu ~ Build …\n"
+    )
+
+
+def test_a_local_call_inside_a_fetched_workflow_is_fetched_from_that_repo_and_ref(tmp_path):
+    files = {
+        ".github/workflows/pr-policy.yml": (
+            "on: workflow_call\njobs:\n  inner:\n    uses: ./.github/workflows/inner.yml\n"
+        ),
+        ".github/workflows/inner.yml": "on: workflow_call\njobs:\n  size:\n    runs-on: x\n",
+    }
+    fetched = []
+
+    def fetch(repository, path, ref):
+        fetched.append((repository, path, ref))
+        return files[path]
+
+    argv = repo(tmp_path, "policy / inner / size\n", pr=CALLS_REMOTE)
+
+    assert run(argv, fetch=fetch) == 0
+    assert fetched[1] == ("some-org/tools", ".github/workflows/inner.yml", "v1")
+
+
+def test_gh_fetch_asks_the_contents_api_for_the_raw_file_at_the_ref():
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout="on: workflow_call\n")
+
+    text = gh_fetch("some-org/tools", ".github/workflows/pr-policy.yml", "v1", run=fake_run)
+
+    assert text == "on: workflow_call\n"
+    assert calls == [
+        (
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/vnd.github.raw",
+                "repos/some-org/tools/contents/.github/workflows/pr-policy.yml?ref=v1",
+            ],
+            {"capture_output": True, "text": True},
+        )
+    ]
+
+
+def test_gh_fetch_raises_fetch_error_with_what_gh_said_when_it_fails():
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="gh: Not Found (HTTP 404)\n")
+
+    with pytest.raises(FetchError) as error:
+        gh_fetch("some-org/tools", ".github/workflows/nope.yml", "v1", run=fake_run)
+
+    assert str(error.value) == "gh: Not Found (HTTP 404)"
+
+
+def test_a_called_workflow_that_cannot_be_fetched_fails_naming_it_and_the_fix(tmp_path, capsys):
+    def fetch(repository, path, ref):
+        raise FetchError("gh: Not Found (HTTP 404)")
+
+    argv = repo(tmp_path, "policy / size\n", pr=CALLS_REMOTE)
+
+    code = run(argv, fetch=fetch)
+
+    assert code == 1
+    assert capsys.readouterr().out == (
+        "Can't read some-org/tools/.github/workflows/pr-policy.yml@v1, called by a job in "
+        "pr.yml: gh: Not Found (HTTP 404)\n"
+        "Check the job's `uses:` path and ref. A workflow in a private repo needs a token that "
+        "can read it.\n"
     )
