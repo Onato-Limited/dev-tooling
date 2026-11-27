@@ -14,6 +14,14 @@ on:
         description: Gitignore-style patterns, one per line, for files no PR may change
         type: string
         default: ""
+      concurrency-pattern:
+        description: A regex; added lines matching it need a `## Concurrency notes` section
+        type: string
+        default: ""
+      concurrency-paths:
+        description: Gitignore-style patterns, one per line, limiting where the pattern applies
+        type: string
+        default: ""
 permissions: {}
 jobs:
   size:
@@ -119,3 +127,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run --quiet --frozen --no-dev --project .devtool devtool required-checks
+  pr-shape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      # The title and body are text anyone opening a PR controls: they reach the shell only
+      # through env, never by ${{ }} substitution into the script.
+      - name: Check the PR's title, body and diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          PATTERN: ${{ inputs.concurrency-pattern }}
+          PATHS: ${{ inputs.concurrency-paths }}
+        run: |
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
+          git diff -U0 "origin/$BASE_REF...HEAD" \
+            | uv run --quiet --frozen --no-dev --project .devtool devtool pr-shape \
+              --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" \
+              --concurrency-pattern "$PATTERN" --concurrency-paths "$PATHS"
