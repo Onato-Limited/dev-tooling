@@ -5,3 +5,4 @@ coverage
 policy / size
 policy / protected-paths
 policy / required-checks
+policy / pr-shape
