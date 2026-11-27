@@ -13,9 +13,14 @@ FIX = (
 )
 
 
+def person(login, kind=None):
+    """A comment's author as GraphQL gives it: the Claude app is the Bot `claude`."""
+    return {"__typename": kind or ("Bot" if login == "claude" else "User"), "login": login}
+
+
 def thread(path, line, author, body, resolved=False, outdated=False, url="https://x/1", replies=()):
-    first = {"author": {"login": author}, "body": body, "url": url}
-    others = [{"author": {"login": who}, "body": text, "url": url} for who, text in replies]
+    first = {"author": person(author), "body": body, "url": url}
+    others = [{"author": person(who), "body": text, "url": url} for who, text in replies]
     return {
         "isResolved": resolved,
         "isOutdated": outdated,
@@ -123,6 +128,13 @@ def test_a_reply_by_the_reviewer_itself_does_not_answer_a_judgement(capsys):
     query = pages([thread("w.yml", 5, "claude", judgement, replies=[("claude", "Still?")])])
 
     assert run(query) == 1
+
+
+def test_a_user_account_named_like_the_reviewer_cannot_open_a_judgement(capsys):
+    impostor = thread("w.yml", 5, "claude", "[Spec] judgement: x", replies=[("onato", "Left")])
+    impostor["comments"]["nodes"][0]["author"] = person("claude", kind="User")
+
+    assert run(pages([impostor])) == 1
 
 
 def test_a_persons_thread_labelled_like_a_judgement_blocks_until_resolved(capsys):

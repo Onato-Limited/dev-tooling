@@ -19,7 +19,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
           isOutdated
           path
           line
-          comments(first: 100) { nodes { author { login } body url } }
+          comments(first: 100) { nodes { author { __typename login } body url } }
         }
       }
     }
@@ -29,6 +29,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
 
 Query = Callable[[str, dict], dict]
 
+# The Claude app. A user account can have the same login, so the author must also be a Bot.
 REVIEWER = "claude"
 JUDGEMENT = re.compile(r"\[[^\]]+\]\s+judgement\b", re.IGNORECASE)
 FIX = (
@@ -73,13 +74,18 @@ def login(comment: dict) -> str:
     return (comment["author"] or {"login": "ghost"})["login"]
 
 
+def by_reviewer(comment: dict) -> bool:
+    author = comment["author"] or {}
+    return author.get("__typename") == "Bot" and author.get("login") == REVIEWER
+
+
 def answered_judgement(thread: dict) -> bool:
     """A judgement finding from the reviewer that someone else has replied to."""
     first, *replies = thread["comments"]["nodes"]
     return (
-        login(first) == REVIEWER
+        by_reviewer(first)
         and JUDGEMENT.match(first["body"]) is not None
-        and any(login(reply) != REVIEWER for reply in replies)
+        and any(not by_reviewer(reply) for reply in replies)
     )
 
 

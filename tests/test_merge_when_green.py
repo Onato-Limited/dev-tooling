@@ -42,10 +42,14 @@ class FakeGitHub:
         return {}
 
 
+def person(login):
+    return {"__typename": "Bot" if login == "claude" else "User", "login": login}
+
+
 def review_thread(author, body, *replies):
     """An unresolved review thread: its first comment and any replies, as (login, body) pairs."""
     comments = [(author, body), *replies]
-    nodes = [{"author": {"login": who}, "body": text, "url": "u"} for who, text in comments]
+    nodes = [{"author": person(who), "body": text, "url": "u"} for who, text in comments]
     return {"isResolved": False, "comments": {"nodes": nodes}}
 
 
