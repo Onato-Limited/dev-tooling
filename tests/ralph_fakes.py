@@ -22,6 +22,8 @@ class FakeGitHub:
         self.approved = False  # the owner's plan-approved label on the milestone's parent
         self.undrafted = []
         self.plan_asked = 0
+        self.audit_failed = None  # the URL of main's latest audit run, if it is red
+        self.violations = []  # open policy-violation issues
 
     def board_workflows(self):
         return self.workflows
@@ -46,6 +48,15 @@ class FakeGitHub:
 
     def has_open_pr(self, issue):
         return issue in self.open_prs
+
+    def is_open(self, issue):
+        return self.issues[issue].is_open
+
+    def failed_audit(self):
+        return self.audit_failed
+
+    def policy_violations(self):
+        return self.violations
 
     def plan_approved(self, parent):
         assert parent == 2
@@ -134,3 +145,22 @@ class Clock:
         self.sleeps.append(seconds)
         self.now += seconds
         self.on_sleep()
+
+
+class FakeDevices:
+    """Issues with a device of their own; a prune in `fails` leaves it and says why."""
+
+    def __init__(self, issues=(), fails=None):
+        self.held = list(issues)
+        self.fails = fails or {}
+        self.pruned = []
+
+    def issues(self):
+        return list(self.held)
+
+    def prune(self, issue):
+        if failed := self.fails.get(issue):
+            return failed
+        self.pruned.append(issue)
+        self.held.remove(issue)
+        return None

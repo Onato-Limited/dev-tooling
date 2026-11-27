@@ -77,6 +77,8 @@ class GitHub(ReadsBoard, Protocol):
     def plan_approved(self, parent: int) -> bool: ...  # the owner added plan-approved last
     def undraft(self, issue: int) -> None: ...
     def arrange_merge(self, pr: int) -> None: ...  # per the project's merge mode
+    def failed_audit(self) -> str | None: ...  # main's latest audit run's URL, if it is red
+    def policy_violations(self) -> list[int]: ...  # the open policy-violation issues
 
 
 class Session(Protocol):
@@ -153,8 +155,11 @@ def run(
     max_iterations: int,
     *,
     improves: bool,
+    devices: Devices,
 ) -> str:
-    loop = _Loop(milestone, github, session, notify, clock, sleep, max_iterations, improves)
+    loop = _Loop(
+        milestone, github, session, notify, clock, sleep, max_iterations, improves, devices
+    )
     message = loop.run()
     notify(message)
     return message
@@ -177,6 +182,8 @@ class _Loop:
     sleep: Callable[[float], None]
     max_iterations: int
     improves: bool  # the project has an improver prompt
+    devices: Devices
+    left_running: dict[int, str] = field(default_factory=dict)  # issue → why its device stayed
     iterations: int = 0
     merged: list[int] = field(default_factory=list)  # since the last improver pass
     improvements: list[Improvement] = field(default_factory=list)
@@ -197,13 +204,32 @@ class _Loop:
                 f"Ralph loop stopped: board workflows are off: {', '.join(off)}. "
                 "Turn them on in the project's Workflows settings."
             )
+        if hold := self.audit_hold():
+            return f"Ralph loop stopped: NEEDS_HUMAN: {hold}."
         self.approve_drafts()
         while True:
             issues = self.github.milestone_issues(self.milestone)
             self.move_closed_to_done(issues)
             issues = self.release_in_review(issues)
-            if (stop := self.step(next_issue(issues))) is not None:
+            stop = self.step(next_issue(issues))
+            self.prune_devices()
+            if stop is not None:
                 return self.stop_message(stop.headline)
+
+    def audit_hold(self) -> str | None:
+        """Why `main` can't be trusted: it took a push that bypassed the policy."""
+        if url := self.github.failed_audit():
+            return f"main's latest audit failed: {url}. Deal with it, then re-run the audit"
+        if violations := self.github.policy_violations():
+            named = ", ".join(f"#{n}" for n in violations)
+            return f"policy-violation issue {named} is open. Close it once it's dealt with"
+        return None
+
+    def prune_devices(self) -> None:
+        """Each issue's device goes once the issue is closed, here or by hand."""
+        for issue in self.devices.issues():
+            if not self.github.is_open(issue) and (failed := self.devices.prune(issue)):
+                self.left_running[issue] = failed
 
     def approve_drafts(self) -> None:
         """Once the plan is approved, drafts go to Todo; one the owner holds in Attended stays."""
@@ -396,6 +422,11 @@ class _Loop:
             lines += [
                 "Worktrees left in place:",
                 *(f"- #{n}: {r}" for n, r in self.left_in_place.items()),
+            ]
+        if self.left_running:
+            lines += [
+                "Devices left running:",
+                *(f"- #{n}: {r}" for n, r in self.left_running.items()),
             ]
         if self.errors_while_running:
             lines += [
