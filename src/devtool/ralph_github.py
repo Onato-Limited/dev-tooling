@@ -1,13 +1,15 @@
-"""The Ralph loop's GitHub, through `gh`: the board and a milestone's issues."""
+"""The Ralph loop's GitHub, through `gh`: the board, a milestone's issues and PRs."""
 
 import json
 import subprocess
 from collections.abc import Callable
 
-from devtool.ralph import GitHubError, Issue
+from devtool.merge_decision import GREEN, RETRO_HEADING
+from devtool.ralph import GitHubError, Issue, PullRequest
 
 Run = Callable[[list[str], str | None], str]
 DRAFT = "draft"
+FAILURE, SUCCESS = "FAILURE", "SUCCESS"
 
 
 def gh_runner(subprocess_run: Callable[..., subprocess.CompletedProcess]) -> Run:
@@ -52,6 +54,30 @@ query($owner: String!, $project: Int!) {
   repositoryOwner(login: $owner) {
     ... on ProjectV2Owner {
       projectV2(number: $project) { workflows(first: 20) { nodes { name enabled } } }
+    }
+  }
+}
+"""
+
+
+PULL_REQUEST_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      merged
+      mergeStateStatus
+      headRefName
+      reviewThreads(first: 100) { nodes { isResolved } }
+      comments(last: 100) { nodes { body } }
+      commits(last: 100) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100) { nodes { ... on CheckRun { name conclusion startedAt } } }
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -107,9 +133,64 @@ class GitHubAdapter:
             and project["owner"]["login"].casefold() == self.board_owner.casefold()
         )
 
+    def pull_request(self, number: int) -> PullRequest:
+        data = self._graphql(PULL_REQUEST_QUERY, owner=self.owner, repo=self.repo, number=number)
+        pr = data["repository"]["pullRequest"]
+        commits = [check_runs(node["commit"]) for node in pr["commits"]["nodes"]]
+        review = self.review_check
+        ci = [ci_conclusion(runs, review) for runs in commits if set(runs) - {review}]
+        return PullRequest(
+            number=number,
+            merged=pr["merged"],
+            changes_requested=sum(runs.get(review) == FAILURE for runs in commits),
+            ci_failure_streak=trailing_failures(ci),
+            has_retro_notes=any(
+                line.strip() == RETRO_HEADING
+                for comment in pr["comments"]["nodes"]
+                for line in comment["body"].splitlines()
+            ),
+            behind=pr["mergeStateStatus"] == "BEHIND",
+            branch=pr["headRefName"],
+            unresolved_threads=sum(
+                not thread["isResolved"] for thread in pr["reviewThreads"]["nodes"]
+            ),
+            blocked_with_checks_passing=pr["mergeStateStatus"] == "BLOCKED"
+            and all_passed(commits[-1]),
+        )
+
     def _graphql(self, query: str, **variables: object) -> dict:
         args = ["api", "graphql", "-f", f"query={query}"]
         for name, value in variables.items():
             # -F would send a login such as 2048 as a number; only ints go typed.
             args += ["-F" if isinstance(value, int) else "-f", f"{name}={value}"]
         return json.loads(self.run(args, None))["data"]
+
+
+def check_runs(commit: dict) -> dict[str, str]:
+    """Each check's newest conclusion; a commit pushed with others may have no runs (a null
+    rollup). GitHub lists a re-run check's runs in no time order, and a queued run has no
+    start yet, which makes it the newest."""
+    rollup = commit["statusCheckRollup"]
+    nodes = rollup["contexts"]["nodes"] if rollup else []
+    runs = sorted((run for run in nodes if "name" in run), key=lambda run: run["startedAt"] or "~")
+    return {run["name"]: run["conclusion"] for run in runs}
+
+
+def all_passed(runs: dict[str, str]) -> bool:
+    """Whether a commit has check runs and each one's newest run passed (or was skipped)."""
+    return bool(runs) and all(conclusion in GREEN for conclusion in runs.values())
+
+
+def trailing_failures(conclusions: list[str]) -> int:
+    streak = 0
+    for conclusion in reversed(conclusions):
+        if conclusion != FAILURE:
+            break
+        streak += 1
+    return streak
+
+
+def ci_conclusion(runs: dict[str, str], review: str) -> str:
+    """A commit's CI: failed when any check but the review failed."""
+    others = [conclusion for name, conclusion in runs.items() if name != review]
+    return FAILURE if FAILURE in others else SUCCESS
