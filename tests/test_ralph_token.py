@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 import pytest
 
 from devtool.ralph_token import (
-    App,
     TokenError,
     TokenFile,
     Tokens,
@@ -79,7 +78,6 @@ def test_the_session_gets_the_token_as_gh_token_and_it_never_appears_when_printe
 
     assert env == {"PATH": "/usr/bin", "GH_TOKEN": "ghs_secret"}
     assert "ghs_secret" not in repr(source)
-    assert "PRIVATE" not in repr(App("1", "2", "-----BEGIN RSA PRIVATE KEY-----"))
 
 
 def completed(returncode=0, stdout=""):
@@ -87,7 +85,7 @@ def completed(returncode=0, stdout=""):
 
 
 def test_the_keychain_key_is_decoded_from_the_hex_security_returns():
-    key = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n"
+    key = "first line of the key\nsecond line\n"
     calls = []
 
     def run(args, **kwargs):
@@ -144,7 +142,7 @@ def test_the_token_request_posts_to_the_github_api_with_the_jwt_as_bearer():
     assert request.get_header("Authorization") == "Bearer jwt.value.sig"
 
 
-def test_a_failed_token_request_stops_the_loop_with_the_reason():
+def test_a_failed_token_request_stops_the_loop_naming_the_request_and_what_to_check():
     def urlopen(request):
         raise urllib.error.URLError("nodename nor servname provided")
 
@@ -152,7 +150,22 @@ def test_a_failed_token_request_stops_the_loop_with_the_reason():
         github_post(urlopen)("/app/installations/1/access_tokens", "jwt")
 
     assert str(error.value) == (
-        "token request failed: <urlopen error nodename nor servname provided>"
+        "Ralph loop can't get a GitHub token: POST /app/installations/1/access_tokens failed: "
+        "<urlopen error nodename nor servname provided>. Check app_id and installation_id in "
+        ".ralph/config, and that the keychain key is that app's."
+    )
+
+
+def test_a_key_openssl_rejects_stops_the_loop_with_what_openssl_said():
+    def run(args, **kwargs):
+        raise subprocess.CalledProcessError(1, args, b"", b"Could not read private key\n")
+
+    with pytest.raises(TokenError) as error:
+        openssl_signer("not a key", run)(b"header.payload")
+
+    assert str(error.value) == (
+        "Ralph loop can't sign the app's token request: openssl: Could not read private key. "
+        "The keychain key must be the app's private key, in PEM form."
     )
 
 

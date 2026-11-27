@@ -6,7 +6,6 @@ import os
 import subprocess
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import IO
@@ -17,13 +16,6 @@ Post = Callable[[str, str], dict]
 
 class TokenError(Exception):
     pass
-
-
-@dataclass(frozen=True)
-class App:
-    app_id: str
-    installation_id: str
-    key: str = field(repr=False)
 
 
 def keychain_key(slug: str, subprocess_run: Callable[..., subprocess.CompletedProcess]) -> str:
@@ -56,6 +48,12 @@ def openssl_signer(key: str, subprocess_run: Callable[..., subprocess.CompletedP
                 check=True,
                 pass_fds=(read,),
             ).stdout
+        except subprocess.CalledProcessError as error:
+            said = error.stderr.decode().strip()
+            raise TokenError(
+                f"Ralph loop can't sign the app's token request: openssl: {said}. "
+                "The keychain key must be the app's private key, in PEM form."
+            ) from error
         finally:
             os.close(read)
 
@@ -77,7 +75,10 @@ def github_post(urlopen: Callable[[urllib.request.Request], IO[bytes]]) -> Post:
             with urlopen(request) as response:
                 return json.load(response)
         except OSError as error:
-            raise TokenError(f"token request failed: {error}") from error
+            raise TokenError(
+                f"Ralph loop can't get a GitHub token: POST {path} failed: {error}. Check app_id "
+                "and installation_id in .ralph/config, and that the keychain key is that app's."
+            ) from error
 
     return post
 
