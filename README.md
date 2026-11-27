@@ -128,6 +128,55 @@ jobs:
 A push, a review or a reply re-runs it. Resolving a thread starts no run, so after resolving the
 last one, re-run the failed job.
 
+## Merge when green
+
+For repos without auto-merge (private repos on GitHub Free). It squash-merges a PR labelled
+`merge-when-green` once all of these hold:
+- every check in the default branch's `.github/required-checks` is green on the head;
+- no review thread is unresolved;
+- the PR has a `## Retro notes` comment, when `require-retro-notes` is on;
+- the branch is up to date with its base. If it's behind, the workflow updates the branch and
+  merges on a later run, once the checks pass again.
+
+The commit's title is `<PR title> (#n)` and its message is the PR body.
+
+The merge is made by a GitHub App you own, not `GITHUB_TOKEN`, so it starts your `main`
+workflows. Give the app read and write access to Contents, Pull requests and Workflows, and read
+access to Checks and Commit statuses. It needs Workflows to merge a PR that changes
+`.github/workflows`. Install the app on the repo, and keep its private key in an Actions secret.
+
+Every run checks all labelled PRs, so it can be triggered by anything that might make a PR ready:
+
+```yaml
+on:
+  pull_request:
+    types: [labeled, synchronize, ready_for_review]
+  pull_request_review:
+  issue_comment:
+    types: [created, edited]
+  workflow_run:
+    # Your workflows that report the required checks.
+    workflows: [ci, policy]
+    types: [completed]
+  # Resolving a thread starts no run, so this catches it, and anything else that was missed.
+  schedule:
+    - cron: "*/15 * * * *"
+jobs:
+  merge-when-green:
+    uses: Onato-Limited/dev-tooling/.github/workflows/merge-when-green.yml@v1
+    permissions:
+      contents: read
+    secrets:
+      app-private-key: ${{ secrets.MY_APP_PRIVATE_KEY }}
+    with:
+      app-id: "123456"
+      require-retro-notes: true
+```
+
+A PR that isn't ready is left alone. The log gives one line per PR saying what it is waiting
+for, and a waiting PR doesn't fail the run. A run fails only when GitHub refuses a call, and the
+log says which PR and why.
+
 ## Develop
 
 ```sh
