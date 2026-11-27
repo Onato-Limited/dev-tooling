@@ -1,0 +1,68 @@
+name: main-audit
+on:
+  workflow_call:
+    inputs:
+      assignee:
+        description: Login the policy-violation issue is assigned to; GitHub emails them
+        type: string
+        required: true
+permissions: {}
+jobs:
+  audit:
+    # Only the default branch is audited (branches, not a tag with its name): a feature branch's
+    # commits have no merged PR yet.
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    # No concurrency group: GitHub keeps only one pending run per group, so pushes close together
+    # would go unaudited. Two failing at once can each open an issue; a duplicate is the lesser harm.
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+      issues: write
+    steps:
+      # The CLI comes from the same commit as this workflow, so a caller pinned at @v1 never runs
+      # a different version of the command than the workflow it called.
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      # As main was before the push, so the push can't drop the check it fails.
+      - name: Read the required checks from before the push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "main-audit: this push created main, so there is nothing before it to audit"
+            echo "  against. If main was deleted and pushed again, check its history by hand."
+            exit 1
+          fi
+          if ! gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/.github/required-checks?ref=$BEFORE" \
+            > "$RUNNER_TEMP/required-checks"; then
+            echo "main-audit: can't read .github/required-checks as main was at $BEFORE (gh's error is above)."
+            echo "  If the file is missing, add it to main, listing the checks a PR must pass, one per line."
+            exit 1
+          fi
+      - name: Audit the push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSIGNEE: ${{ inputs.assignee }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          uv run --quiet --frozen --no-dev --project .devtool devtool main-audit \
+            --repo "$GITHUB_REPOSITORY" --event "$GITHUB_EVENT_PATH" \
+            --required-checks "$RUNNER_TEMP/required-checks" \
+            --assignee "$ASSIGNEE" --run-url "$RUN_URL"
