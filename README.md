@@ -264,9 +264,11 @@ stop starts `Ralph loop stopped:` or `Ralph loop can't`.
 - **The project's GitHub App**, in each session: commits, pushes and PRs, authored as
   `<app_slug>[bot]`. The bot's user ID, for its commit email, isn't configured: each run, a dry
   run included, looks it up with `gh api users/<app_slug>[bot]`, so a wrong `app_slug` stops the
-  loop there. Give the app read and write access to Contents, Pull requests and Issues
-  (and Workflows, if its PRs may change `.github/workflows`), and read access to Checks. Install it on the repo, and keep its private key in
-  your login keychain under the app's slug:
+  loop there. Give the app read and write access to Contents, Pull requests and Issues, and
+  read access to Checks. It also needs Workflows whenever `.github/workflows` changes, in a
+  session's PR or on `main`: the loop pushes `main`'s merge to each open PR's branch as the app,
+  and GitHub refuses that push without it. Install the app on the repo, and keep its private key
+  in your login keychain under the app's slug:
   `security add-generic-password -s <app_slug> -a private-key -w "$(cat <key>.pem)"`.
   A real run mints a token before taking an issue, so a missing key stops it at once.
 
@@ -298,10 +300,10 @@ of the value.
 | `audit_check` | The main audit's check name, `main-audit / audit` by default. |
 | `notify` | A command run with each message to you as its last argument. Every message is printed too. |
 | `cleanup_list`, `cleanup_prune` | Set both or neither. The first prints the issue numbers that have a device of their own (a simulator, say), one per line; the second, given an issue, removes its device. The loop prunes each closed issue's device after every pass. |
-| `update_hook` | A shell command run as the bot after `main` is merged into a PR's branch, in that worktree. It may resolve conflicts and commit. The update fails if it exits non-zero or leaves a conflict. |
+| `update_hook` | A shell command run as the bot after `main` is merged into a PR's branch. It runs in a temporary worktree, `<checkout>-update-<pr>`, made from the PR's branch and removed afterwards, without `session_path` on its `PATH`. It may resolve conflicts, and must commit whatever it changes. The update fails if the hook exits non-zero, or leaves a conflict or anything `git status` lists, untracked files included. |
 | `session_path` | Directories put first on the session's `PATH`, separated by `:`; relative ones are from the checkout. |
 
-Commands run in the checkout.
+`notify` and the cleanup commands run in the checkout.
 
 ### Prompts
 
