@@ -30,16 +30,27 @@ class FakeGitHub:
         self.calls.append((method, path, fields))
         if path in self.fail:
             raise GitHubError(self.fail[path])
+        if "/check-runs?" in path:
+            sha = path.split("/commits/")[1].split("/")[0]
+            page = int(path.rsplit("page=", 1)[1])
+            runs = next(pr["_check_runs"] for pr in self.prs if pr["headRefOid"] == sha)
+            return {"total_count": len(runs), "check_runs": runs[(page - 1) * 100 : page * 100]}
         if method == "GET":
             return {"behind_by": self.behind_by.get(path, 0)}
         return {}
 
 
-def check_run(name, conclusion="SUCCESS", status="COMPLETED", started="2026-11-27T01:00:00Z"):
+def check_run(name, conclusion="success", status="completed", started="2026-11-27T01:00:00Z"):
+    """A check run as GET /commits/{sha}/check-runs returns it."""
+    return {"name": name, "status": status, "conclusion": conclusion, "started_at": started}
+
+
+def rollup_run(name, conclusion, started):
+    """A check run as the GraphQL statusCheckRollup returns it, which leaves out re-runs."""
     return {
         "__typename": "CheckRun",
         "name": name,
-        "status": status,
+        "status": "COMPLETED",
         "conclusion": conclusion,
         "startedAt": started,
     }
@@ -49,9 +60,11 @@ def status(context, state):
     return {"__typename": "StatusContext", "context": context, "state": state}
 
 
-def pr_node(number=12, checks=None, comments=(), mergeable="MERGEABLE", sha="abc123"):
-    contexts = [check_run("lint")] if checks is None else checks
+def pr_node(number=12, checks=None, rollup=(), comments=(), mergeable="MERGEABLE", sha="abc123"):
+    runs = [check_run("lint")] if checks is None else checks
     return {
+        # Not part of the GraphQL node: the fake serves these from the check-runs endpoint.
+        "_check_runs": runs,
         "number": number,
         "title": "feat: a thing",
         "body": "Closes #4",
@@ -62,7 +75,7 @@ def pr_node(number=12, checks=None, comments=(), mergeable="MERGEABLE", sha="abc
         "labels": {"nodes": [{"name": "merge-when-green"}]},
         "comments": {"nodes": [{"body": body} for body in comments]},
         "commits": {
-            "nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": contexts}}}}]
+            "nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": list(rollup)}}}}]
         },
     }
 
@@ -85,18 +98,27 @@ def test_no_labelled_prs_says_so_and_passes(capsys, tmp_path):
 
 
 def test_a_pr_that_waits_prints_the_reason_and_passes(capsys, tmp_path):
-    github = FakeGitHub([pr_node(checks=[check_run("lint", "FAILURE")])])
+    github = FakeGitHub([pr_node(checks=[check_run("lint", "failure")])])
 
     code = run(github, tmp_path=tmp_path)
 
     assert code == 0
     assert capsys.readouterr().out == "#12 waits: required checks not green: lint (failure)\n"
-    assert github.calls[1:] == [("GET", "repos/o/r/compare/main...abc123", None)]
+    assert github.calls[1:] == [
+        ("GET", "repos/o/r/compare/main...abc123", None),
+        ("GET", "repos/o/r/commits/abc123/check-runs?filter=latest&per_page=100&page=1", None),
+    ]
 
 
 def test_unfinished_runs_are_pending_and_status_contexts_count(capsys, tmp_path):
-    contexts = [check_run("lint", None, status="IN_PROGRESS"), status("ci/legacy", "ERROR")]
-    github = FakeGitHub([pr_node(checks=contexts)])
+    github = FakeGitHub(
+        [
+            pr_node(
+                checks=[check_run("lint", None, status="in_progress")],
+                rollup=[status("ci/legacy", "ERROR")],
+            )
+        ]
+    )
 
     run(github, tmp_path=tmp_path, required_checks="lint\nci/legacy\n")
 
@@ -107,14 +129,16 @@ def test_unfinished_runs_are_pending_and_status_contexts_count(capsys, tmp_path)
 
 def test_of_two_runs_with_one_name_the_newest_counts(capsys, tmp_path):
     newest_red = [
-        check_run("lint", "FAILURE", started="2026-11-27T02:00:00Z"),
-        check_run("lint", "SUCCESS", started="2026-11-27T01:00:00Z"),
+        check_run("lint", "failure", started="2026-11-27T02:00:00Z"),
+        check_run("lint", "success", started="2026-11-27T01:00:00Z"),
     ]
     queued = [
-        check_run("lint", "SUCCESS", started="2026-11-27T01:00:00Z"),
-        check_run("lint", None, status="QUEUED", started=None),
+        check_run("lint", "success", started="2026-11-27T01:00:00Z"),
+        check_run("lint", None, status="queued", started=None),
     ]
-    github = FakeGitHub([pr_node(checks=newest_red), pr_node(number=13, checks=queued)])
+    github = FakeGitHub(
+        [pr_node(checks=newest_red), pr_node(number=13, checks=queued, sha="def456")]
+    )
 
     run(github, tmp_path=tmp_path)
 
@@ -122,6 +146,37 @@ def test_of_two_runs_with_one_name_the_newest_counts(capsys, tmp_path):
         "#12 waits: required checks not green: lint (failure)\n"
         "#13 waits: required checks not green: lint (pending)\n"
     )
+
+
+def test_a_passing_re_run_counts_though_the_rollup_holds_only_cancelled_duplicates(
+    capsys, tmp_path
+):
+    # Onato-Limited/doc-snark-simulator#55: review events start duplicate runs that concurrency
+    # cancels, and the rollup never shows the re-run that passed.
+    name = "review-threads / threads"
+    rollup = [
+        rollup_run(name, "SUCCESS", "2026-11-27T05:15:48Z"),
+        rollup_run(name, "CANCELLED", "2026-11-27T05:21:05Z"),
+    ]
+    latest = [
+        check_run(name, "success", started="2026-11-27T05:15:48Z"),
+        check_run(name, "cancelled", started="2026-11-27T05:21:05Z"),
+        check_run(name, "success", started="2026-11-27T05:22:25Z"),
+    ]
+    github = FakeGitHub([pr_node(checks=latest, rollup=rollup)])
+
+    run(github, tmp_path=tmp_path, required_checks=f"{name}\n")
+
+    assert capsys.readouterr().out == "#12 merged: feat: a thing (#12)\n"
+
+
+def test_check_runs_past_the_first_hundred_are_read(capsys, tmp_path):
+    runs = [check_run(f"job {n}") for n in range(100)] + [check_run("lint", "failure")]
+    github = FakeGitHub([pr_node(checks=runs)])
+
+    run(github, tmp_path=tmp_path)
+
+    assert capsys.readouterr().out == "#12 waits: required checks not green: lint (failure)\n"
 
 
 def test_unresolved_review_threads_are_counted(capsys, tmp_path):
@@ -133,7 +188,7 @@ def test_unresolved_review_threads_are_counted(capsys, tmp_path):
 
 
 def test_a_head_with_no_checks_at_all_waits_for_them(capsys, tmp_path):
-    node = pr_node()
+    node = pr_node(checks=[])
     node["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
 
     run(FakeGitHub([node]), tmp_path=tmp_path)

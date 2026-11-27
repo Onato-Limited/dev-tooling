@@ -27,7 +27,6 @@ query($owner: String!, $name: String!, $label: String!) {
         comments(last: 100) { nodes { body } }
         commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
           __typename
-          ... on CheckRun { name status conclusion startedAt }
           ... on StatusContext { context state }
         } } } } } }
       }
@@ -56,20 +55,35 @@ def gh_rest(method: str, path: str, fields: dict | None = None, run=subprocess.r
     return json.loads(result.stdout)
 
 
-def checks(node: dict) -> dict[str, str]:
+def check_runs(repo: str, sha: str, rest: Rest) -> list[dict]:
+    """The latest attempt of each check suite's runs on a commit."""
+    runs, page = [], 1
+    while True:
+        path = f"repos/{repo}/commits/{sha}/check-runs?filter=latest&per_page=100&page={page}"
+        found = rest("GET", path)
+        runs += found["check_runs"]
+        if len(runs) >= found["total_count"]:
+            return runs
+        page += 1
+
+
+def checks(repo: str, node: dict, rest: Rest) -> dict[str, str]:
     """Each check's state on the head, the newest run winning when one name ran more than once."""
+    # Check runs come from REST, not the rollup: the rollup leaves out re-runs, so a cancelled
+    # duplicate there can hide the re-run that passed.
     # A commit nothing has reported on yet has no rollup at all.
     rollup = node["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
     contexts = rollup["contexts"]["nodes"] if rollup else []
-    states = {}
-    for context in contexts:
-        if context["__typename"] == "StatusContext":
-            states[context["context"]] = context["state"]
-    runs = [context for context in contexts if context["__typename"] == "CheckRun"]
-    # A run that hasn't started yet has no startedAt, and is the newest.
-    for check in sorted(runs, key=lambda run: (run["startedAt"] is None, run["startedAt"] or "")):
-        done = check["status"] == "COMPLETED"
-        states[check["name"]] = check["conclusion"] if done else "PENDING"
+    states = {
+        context["context"]: context["state"]
+        for context in contexts
+        if context["__typename"] == "StatusContext"
+    }
+    runs = check_runs(repo, node["headRefOid"], rest)
+    # A run that hasn't started yet has no started_at, and is the newest.
+    for run in sorted(runs, key=lambda run: (run["started_at"] is None, run["started_at"] or "")):
+        done = run["status"] == "completed"
+        states[run["name"]] = run["conclusion"].upper() if done else "PENDING"
     return states
 
 
@@ -84,7 +98,7 @@ def snapshot(repo: str, node: dict, query: Query, rest: Rest) -> PullRequest:
         draft=node["isDraft"],
         mergeable=node["mergeable"],
         behind=compare["behind_by"] > 0,
-        checks=checks(node),
+        checks=checks(repo, node, rest),
         unresolved_threads=sum(
             not thread["isResolved"] for thread in threads(repo, node["number"], query)
         ),
