@@ -23,8 +23,17 @@ class FakeGh:
         return reply if isinstance(reply, str) else json.dumps({"data": reply})
 
 
-def adapter(gh, board_owner="owner"):
-    return GitHubAdapter("owner/repo", board_owner, 2, "claude-review", gh)
+def adapter(gh, board_owner="owner", review_check="claude-review", merge_mode="auto"):
+    return GitHubAdapter(
+        "owner/repo",
+        board_owner,
+        2,
+        review_check,
+        gh,
+        branch_prefix="someone",
+        approver="the-owner",
+        merge_mode=merge_mode,
+    )
 
 
 def sub_issue(
@@ -354,7 +363,7 @@ def test_the_review_check_is_the_one_the_config_names():
     ]
     gh = FakeGh(pr_reply(commits=commits))
 
-    pr = GitHubAdapter("owner/repo", "owner", 2, "verdict", gh).pull_request(41)
+    pr = adapter(gh, review_check="verdict").pull_request(41)
 
     assert (pr.changes_requested, pr.ci_failure_streak) == (2, 1)
 
@@ -389,3 +398,185 @@ def test_a_comment_that_only_mentions_the_retro_heading_is_not_retro_notes():
     gh = FakeGh(pr_reply(comments=comments, commits=[commit()]))
 
     assert adapter(gh).pull_request(93).has_retro_notes is False
+
+
+def status_lookup(items, board_owner="owner"):
+    """The board's Status field and the issue's board items, as (item id, project, owner)."""
+    options = [("opt_progress", "In progress"), ("opt_review", "In review"), ("opt_done", "Done")]
+    return {
+        "repositoryOwner": {
+            "projectV2": {
+                "id": "PVT_board",
+                "field": {
+                    "id": "PVTSSF_status",
+                    "options": [{"id": i, "name": name} for i, name in options],
+                },
+            }
+        },
+        "repository": {
+            "issue": {
+                "id": "I_38",
+                "projectItems": {
+                    "nodes": [
+                        {"id": item, "project": {"number": n, "owner": {"login": owner}}}
+                        for item, n, owner in items
+                    ]
+                },
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "option"),
+    [("In progress", "opt_progress"), ("In review", "opt_review"), ("Done", "opt_done")],
+)
+def test_set_status_edits_the_issues_status_field_on_the_board(status, option):
+    items = [("PVTI_other", 5, "owner"), ("PVTI_38", 2, "Owner")]
+    gh = FakeGh(status_lookup(items), {})
+
+    adapter(gh).set_status(38, status)
+
+    assert "board_owner=owner" in sent_variables(gh.calls[0])
+    assert "updateProjectV2ItemFieldValue" in sent_query(gh.calls[1])
+    assert sent_variables(gh.calls[1]) == [
+        "project=PVT_board",
+        "item=PVTI_38",
+        "field=PVTSSF_status",
+        f"option={option}",
+    ]
+
+
+def test_set_status_adds_an_issue_missing_from_the_board_before_editing_it():
+    gh = FakeGh(
+        status_lookup([("PVTI_other", 5, "owner"), ("PVTI_elsewhere", 2, "someone-else")]),
+        {"addProjectV2ItemById": {"item": {"id": "PVTI_new"}}},
+        {},
+    )
+
+    adapter(gh).set_status(38, "In progress")
+
+    assert "addProjectV2ItemById" in sent_query(gh.calls[1])
+    assert sent_variables(gh.calls[1]) == ["project=PVT_board", "content=I_38"]
+    assert "item=PVTI_new" in sent_variables(gh.calls[2])
+
+
+def test_set_status_to_a_status_the_board_lacks_fails_before_touching_the_board():
+    gh = FakeGh(status_lookup([]))
+
+    with pytest.raises(GitHubError) as error:
+        adapter(gh).set_status(38, "Blocked")
+
+    assert str(error.value) == (
+        "project 2 of owner has no Status option 'Blocked'. Add it to the board's Status field."
+    )
+    assert len(gh.calls) == 1
+
+
+def open_pr_reply(closing=(), on_branch=0):
+    return {
+        "repository": {
+            "issue": {"closedByPullRequestsReferences": {"nodes": [{"state": s} for s in closing]}},
+            "pullRequests": {"totalCount": on_branch},
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("reply", "held"),
+    [
+        (open_pr_reply(), False),
+        (open_pr_reply(closing=["MERGED", "CLOSED"]), False),
+        (open_pr_reply(closing=["MERGED", "OPEN"]), True),
+        (open_pr_reply(on_branch=1), True),
+    ],
+    ids=["none", "only merged or closed", "an open one closes it", "one is on its branch"],
+)
+def test_an_issue_has_an_open_pr_when_one_closes_it_or_is_on_its_branch(reply, held):
+    gh = FakeGh(reply)
+
+    assert adapter(gh).has_open_pr(119) is held
+    assert {"number=119", "branch=someone/119-ralph"} <= set(sent_variables(gh.calls[0]))
+
+
+@pytest.mark.parametrize(("state", "is_open"), [("OPEN", True), ("CLOSED", False)])
+def test_whether_an_issue_is_open_comes_from_its_state(state, is_open):
+    gh = FakeGh(f"{state}\n")
+
+    assert adapter(gh).is_open(120) is is_open
+    assert gh.calls == [
+        (["issue", "view", "120", "-R", "owner/repo", "--json", "state", "--jq", ".state"], None)
+    ]
+
+
+def test_comment_posts_the_body_on_the_issue_under_the_agent_marker():
+    gh = FakeGh("https://github.com/owner/repo/issues/7#issuecomment-1\n")
+
+    url = adapter(gh).comment(7, "Moved to In review by the Ralph loop: no PR opened.")
+
+    assert url == "https://github.com/owner/repo/issues/7#issuecomment-1"
+    assert gh.calls == [
+        (
+            ["issue", "comment", "7", "-R", "owner/repo", "--body-file", "-"],
+            "> 🤖 Agent comment — written by Claude Code\n\n"
+            "Moved to In review by the Ralph loop: no PR opened.",
+        )
+    ]
+
+
+def events(*events):
+    """`gh api --paginate …/events --jq '.[]'` prints one event per line."""
+    lines = [{"event": e, "label": {"name": n}, "actor": {"login": a}} for e, n, a in events]
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("reply", "approved"),
+    [
+        (
+            events(("labeled", "draft", "the-owner"), ("labeled", "plan-approved", "the-owner")),
+            True,
+        ),
+        (events(("labeled", "plan-approved", "some-app[bot]")), False),
+        (
+            events(
+                ("labeled", "plan-approved", "the-owner"),
+                ("unlabeled", "plan-approved", "the-owner"),
+            ),
+            False,
+        ),
+        ("", False),
+    ],
+    ids=["the loop's login added it", "someone else added it", "removed later", "never added"],
+)
+def test_the_plan_is_approved_only_while_the_loops_login_added_plan_approved_last(reply, approved):
+    gh = FakeGh(reply)
+
+    assert adapter(gh).plan_approved(2) is approved
+    args, _ = gh.calls[0]
+    assert args == ["api", "--paginate", "repos/owner/repo/issues/2/events", "--jq", ".[]"]
+
+
+def test_undraft_removes_the_draft_label():
+    gh = FakeGh("")
+
+    adapter(gh).undraft(7)
+
+    assert gh.calls == [
+        (["issue", "edit", "7", "-R", "owner/repo", "--remove-label", "draft"], None)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mode", "command"),
+    [
+        ("auto", ["pr", "merge", "40", "-R", "owner/repo", "--auto", "--squash"]),
+        ("label", ["pr", "edit", "40", "-R", "owner/repo", "--add-label", "merge-when-green"]),
+    ],
+)
+def test_a_merge_is_arranged_the_way_the_projects_merge_mode_says(mode, command):
+    gh = FakeGh("")
+
+    adapter(gh, merge_mode=mode).arrange_merge(40)
+
+    assert gh.calls == [(command, None)]
