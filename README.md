@@ -242,22 +242,29 @@ uvx --from git+https://github.com/Onato-Limited/dev-tooling@v1 devtool ralph --m
 Each pass takes the lowest-numbered open Todo issue with no open blocker, moves it to In
 progress, and starts `claude` in a worktree of its own on `<prefix>/<issue>-ralph`. The session
 opens a PR, and the loop arranges its merge, keeps it up to date with `main`, and waits for it.
-An issue moves to In review, and you're told, when the session says `NEEDS_HUMAN:`, opens no
-PR, or its PR has had changes requested 3 times or failed CI 3 runs in a row. After 5 merged PRs, and before it
+An issue moves to In review, and you're told, when the session says `NEEDS_HUMAN:` or opens no
+PR, or when its PR has had changes requested 3 times, has failed CI 3 runs in a row, can't be
+brought up to date with `main` (a conflict, or `update_hook` failed), or is green but held by an
+unresolved review thread. After 5 merged PRs, and before it
 stops, an improver session reviews them if the project has `.ralph/IMPROVE.md`.
 
 The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
-PRs still haven't merged after it has waited an hour for them. A stop that needs you reads
-`Ralph loop stopped: NEEDS_HUMAN: …`, so a `notify` command can match on `NEEDS_HUMAN:`. It
-won't start while `main`'s latest `audit_check` run is red or a `policy-violation` issue is open
-(see [Main audit](#main-audit)).
+PRs still haven't merged after it has waited an hour for them. It won't start while `main`'s
+latest `audit_check` run is red or a `policy-violation` issue is open (see
+[Main audit](#main-audit)); that stop reads `Ralph loop stopped: NEEDS_HUMAN: …`.
+
+Every message to you starts `Ralph loop`. A `notify` command that should only page for what
+needs you can match `needs you`, `NEEDS_HUMAN:`, `needs your decision` and `can't start`; every
+stop starts `Ralph loop stopped:` or `Ralph loop can't`.
 
 ### What it runs as
 
 - **You**, through `gh`: reading and moving the board, labels and comments. A GitHub App can't
   move cards on a user-owned project. Your login is the only one whose `plan-approved` counts.
 - **The project's GitHub App**, in each session: commits, pushes and PRs, authored as
-  `<app_slug>[bot]`. Give the app read and write access to Contents, Pull requests and Issues
+  `<app_slug>[bot]`. The bot's user ID, for its commit email, isn't configured: each run, a dry
+  run included, looks it up with `gh api users/<app_slug>[bot]`, so a wrong `app_slug` stops the
+  loop there. Give the app read and write access to Contents, Pull requests and Issues
   (and Workflows, if its PRs may change `.github/workflows`), and read access to Checks. Install it on the repo, and keep its private key in
   your login keychain under the app's slug:
   `security add-generic-password -s <app_slug> -a private-key -w "$(cat <key>.pem)"`.
@@ -279,7 +286,8 @@ they are.
 
 ### `.ralph/config`
 
-One `name=value` per line; `#` starts a comment.
+One `name=value` per line. A line starting with `#` is a comment; a `#` later in a line is part
+of the value.
 
 | Key | |
 |---|---|
