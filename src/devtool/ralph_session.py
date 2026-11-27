@@ -2,21 +2,73 @@
 
 import json
 import re
+import shlex
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 
 from devtool.ralph import POLL_SECONDS, Issue, Outcome
+from devtool.ralph_token import TokenFile
 
 STREAM = ["--permission-mode", "auto", "--output-format", "stream-json", "--verbose"]
+
+
+# What a user sets to choose how `claude` logs in and where its config is; every other
+# CLAUDE* variable is one a Claude Code parent sets, which would make `claude` its child.
+USER_CLAUDE_SETTINGS = frozenset(
+    {
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+    }
+)
+
+
+class SessionTokens(Protocol):
+    def session_env(self, environ: dict[str, str]) -> dict[str, str]: ...
+
+    def current(self) -> str: ...
+
+
+@dataclass(frozen=True)
+class Bot:
+    """The GitHub App's bot user: `<app_slug>[bot]` and its user ID."""
+
+    login: str
+    user_id: int
+
+    def git_env(self) -> dict[str, str]:
+        """Commits as the bot, pushed over HTTPS with the token file's token: the remote may be
+        SSH, which would push with the owner's key, and the helper list is emptied first so the
+        keychain's owner credentials aren't offered."""
+        email = f"{self.user_id}+{self.login}@users.noreply.github.com"
+        return {
+            "GIT_AUTHOR_NAME": self.login,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": self.login,
+            "GIT_COMMITTER_EMAIL": email,
+            "GIT_CONFIG_COUNT": "3",
+            "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_0": "git@github.com:",
+            "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_1": "",
+            "GIT_CONFIG_KEY_2": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_2": "ralph",  # git-credential-ralph
+        }
 
 
 @dataclass
 class ClaudeSession:
     repo: Path
     branch_prefix: str
+    bot: Bot
+    tokens: SessionTokens
+    session_path: str | None
     run: Callable[..., subprocess.CompletedProcess]
     start: Callable[..., subprocess.Popen]
     environ: dict[str, str]
@@ -30,7 +82,10 @@ class ClaudeSession:
         prompt = (self.repo / ".ralph" / "PROMPT.md").read_text()
         prompt = prompt.replace("{issue}", str(issue.number)).replace("{branch}", branch)
         if resuming:
-            prompt += self._resuming(branch)
+            note, failed = self._resuming(branch)
+            if failed:
+                return Outcome(pr=None, needs_human=failed)
+            prompt += note
         text, log = self._claude(prompt, worktree, str(issue.number), while_running)
         if text is None:
             return Outcome(pr=None, needs_human=f"the session ended without a result; see {log}")
@@ -58,21 +113,25 @@ class ClaudeSession:
         ).stdout
         return bool(found.strip())
 
-    def _resuming(self, branch: str) -> str:
-        found = self.run(
+    def _resuming(self, branch: str) -> tuple[str, str | None]:
+        """The prompt's note that the session resumes, or what failed in looking for its PR."""
+        done = self.run(
             ["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number"]
             + ["--jq", ".[].number"],
             capture_output=True,
             text=True,
             cwd=self.repo,
-            env=own_environ(self.environ),
-        ).stdout.split()
+            env=self.tokens.session_env(own_environ(self.environ)),
+        )
+        if done.returncode != 0:
+            return "", f"gh pr list failed: {done.stderr.strip()}"
+        found = done.stdout.split()
         pr = f"open PR #{found[0]}" if found else "no open PR"
         return (
             f"\nResuming: an earlier session left branch `{branch}` with {pr}. Before anything"
             " else, read the latest comments on the issue and on the PR: the owner's ruling is"
             " there.\n"
-        )
+        ), None
 
     def _branch(self, issue: int) -> str:
         return f"{self.branch_prefix}/{issue}-ralph"
@@ -94,16 +153,24 @@ class ClaudeSession:
         logs = self.repo / ".ralph" / "logs"
         logs.mkdir(exist_ok=True)
         log = logs / f"{self.now():%Y%m%d-%H%M%S}-{name}.log"
-        with log.open("w") as out:
+        with tempfile.TemporaryDirectory() as tmp, log.open("w") as out:
+            private = Path(tmp)
+            token = TokenFile(private / "token", self.tokens.current, self.now)
+            environ = with_session_path(self.session_path, without_token(own_environ(self.environ)))
             process = self.start(
                 ["claude", "-p", prompt, *STREAM],
                 cwd=worktree,
-                env=own_environ(self.environ),
+                env={
+                    **with_token_file(private / "bin", environ),
+                    **self.bot.git_env(),
+                    "RALPH_TOKEN_FILE": str(token.path),
+                },
                 stdout=out,
                 stderr=subprocess.STDOUT,
                 text=True,
             )
             while not exited(process):
+                token.refresh()
                 while_running()
         return final_result(log), log
 
@@ -118,7 +185,40 @@ def exited(process: subprocess.Popen) -> bool:
 
 def own_environ(environ: dict[str, str]) -> dict[str, str]:
     """Without the CLAUDE* variables a Claude Code parent sets, which make `claude` a child."""
-    return {k: v for k, v in environ.items() if not k.startswith("CLAUDE")}
+    return {
+        k: v for k, v in environ.items() if not k.startswith("CLAUDE") or k in USER_CLAUDE_SETTINGS
+    }
+
+
+def without_token(environ: dict[str, str]) -> dict[str, str]:
+    """Without the owner's GH_TOKEN: the session's `gh` reads the bot's from its token file."""
+    return {k: v for k, v in environ.items() if k != "GH_TOKEN"}
+
+
+def with_session_path(session_path: str | None, environ: dict[str, str]) -> dict[str, str]:
+    if session_path is None:
+        return environ
+    return {**environ, "PATH": f"{session_path}:{environ['PATH']}"}
+
+
+def with_token_file(bin: Path, environ: dict[str, str]) -> dict[str, str]:
+    """With a `gh` first on the PATH that runs the real one with the token file's token, and
+    the git credential helper that answers with it."""
+    bin.mkdir()
+    path = shlex.quote(environ["PATH"])
+    script(bin / "gh", f'GH_TOKEN=$(cat "$RALPH_TOKEN_FILE") PATH={path} exec gh "$@"')
+    script(
+        bin / "git-credential-ralph",
+        'test "$1" = get || exit 0\n'
+        "echo username=x-access-token\n"
+        'echo "password=$(cat "$RALPH_TOKEN_FILE")"',
+    )
+    return {**environ, "PATH": f"{bin}:{environ['PATH']}"}
+
+
+def script(path: Path, body: str) -> None:
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o700)
 
 
 def final_result(log: Path) -> str | None:
