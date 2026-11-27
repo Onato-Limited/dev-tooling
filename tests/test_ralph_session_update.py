@@ -180,7 +180,8 @@ def test_the_update_pushes_with_the_bots_token_through_gh_not_the_owners_keychai
     session.update(PullRequest(40, behind=True, branch="pr"))
 
     env = next(kwargs["env"] for args, kwargs in calls if "push" in args)
-    helpers = (env["GIT_CONFIG_VALUE_1"], env["GIT_CONFIG_VALUE_2"])
+    keys = [k for k, v in env.items() if v == "credential.https://github.com.helper"]
+    helpers = tuple(env[k.replace("KEY", "VALUE")] for k in keys)
     assert (env["GH_TOKEN"], helpers) == ("ghs_bot", ("", "!gh auth git-credential"))
 
 
