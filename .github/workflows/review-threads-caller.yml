@@ -8,7 +8,7 @@ on:
 permissions: {}
 jobs:
   review-threads:
-    uses: Onato-Limited/dev-tooling/.github/workflows/review-threads.yml@v1
+    uses: Onato-Limited/dev-tooling/.github/workflows/review-threads.yml@9b2370bb8517e06c4c5e20a7122ec3d1a745c173
     permissions:
       contents: read
       pull-requests: read
