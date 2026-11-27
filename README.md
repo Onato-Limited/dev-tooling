@@ -8,7 +8,9 @@ Shared CI policy checks, PR review and Ralph loop tooling for Onato Limited proj
 uvx --from git+https://github.com/Onato-Limited/dev-tooling@v1 devtool --version
 ```
 
-Pin `@v1`: it moves to each `v1.x.y` release and never to a breaking one.
+Pin `@v1`: it moves to each `v1.x.y` release and never to a breaking one. Each release's notes
+are on the [Releases](https://github.com/Onato-Limited/dev-tooling/releases) page; watch the repo
+for releases to hear about new checks and inputs.
 
 ## PR policy checks
 
