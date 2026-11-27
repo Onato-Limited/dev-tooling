@@ -53,6 +53,15 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
             "finishes; re-run the review job, and check its Review step's log if it fails again."
         )
         return 1
+    if result.get("is_error"):
+        # claude-code-action hides Claude's output, so this is the only place the cause shows.
+        error = str(result.get("result") or "").strip() or "(the run gave no error text)"
+        print(f"Review: the Claude run ended in an error: {error}")
+        print(
+            "  Fix the cause it names (the model, effort or CLAUDE_CODE_OAUTH_TOKEN the workflow "
+            "was given), then re-run the review job."
+        )
+        return 1
     denials = result.get("permission_denials") or []
     count = max(len(denials), result.get("permission_denials_count") or 0)
     # Unlisted denials can't be told apart, so they count as required.
