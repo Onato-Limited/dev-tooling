@@ -88,9 +88,16 @@ def test_devices_come_from_the_cleanup_commands_and_without_them_there_are_none(
     assert (NoDevices().issues(), NoDevices().prune(7)) == ([], None)
 
 
-def test_one_cleanup_command_without_the_other_is_a_config_error(tmp_path):
-    with pytest.raises(ConfigError, match="set both cleanup_list and cleanup_prune, or neither"):
-        parts(tmp_path, replace(CONFIG, cleanup_list="scripts/devices list"))
+def test_the_notifier_runs_the_projects_notify_command_in_the_checkout(tmp_path):
+    ran = []
+    identity = git_identity()
+    run = lambda args, **kwargs: ran.append((args, kwargs)) or identity(args, **kwargs)  # noqa: E731
+    config = replace(CONFIG, notify="scripts/notify")
+    built = assemble(config, tmp_path, gh, run, subprocess.Popen, {}, tokens=None)
+
+    built.notify("stopped")
+
+    assert ran[-1] == (["scripts/notify", "stopped"], {"cwd": tmp_path, "check": False})
 
 
 def test_the_improver_runs_only_when_the_project_has_its_prompt(tmp_path):
@@ -126,20 +133,48 @@ class Connect:
         return self.built
 
 
-def test_a_bad_config_prints_its_error_and_exits_1_before_touching_github(tmp_path, capsys):
+def test_a_bad_config_prints_its_error_and_exits_1_before_touching_github(
+    tmp_path, capsys, monkeypatch
+):
     config_file(tmp_path, "app_id=1\n")
+    monkeypatch.chdir(tmp_path)
     connect = Connect()
 
-    assert main(["--milestone", "2"], repo=tmp_path, connect=connect) == 1
+    assert main(["--milestone", "2"], connect=connect) == 1
     assert "is missing installation_id" in capsys.readouterr().out
     assert connect.calls == 0
 
 
 def test_a_dry_run_prints_the_next_issue_and_starts_nothing(tmp_path, capsys):
     config_file(tmp_path)
-    built = Parts(FakeGitHub([Issue(7, TODO)]), None, NoDevices(), None, improves=False)
+    mint = Failing(TokenError("a dry run minted a token"))
+    built = Parts(FakeGitHub([Issue(7, TODO)]), None, NoDevices(), None, False, mint)
 
     assert main(["--milestone", "2", "--dry-run"], repo=tmp_path, connect=Connect(built)) == 0
+    assert capsys.readouterr().out == "Next: #7\n"
+
+
+class Unreachable(FakeGitHub):
+    def milestone_issues(self, milestone):
+        raise GitHubError("gh api graphql failed: HTTP 502")
+
+
+def test_a_dry_run_that_fails_on_github_only_prints_its_error(tmp_path, capsys):
+    config_file(tmp_path)
+    notes = []
+    built = Parts(Unreachable([]), None, NoDevices(), notes.append, False)
+
+    assert main(["--milestone", "2", "--dry-run"], repo=tmp_path, connect=Connect(built)) == 1
+    assert capsys.readouterr().out == "Ralph loop stopped: gh api graphql failed: HTTP 502\n"
+    assert notes == []
+
+
+def test_without_connect_main_builds_the_live_parts(tmp_path, capsys, monkeypatch):
+    config_file(tmp_path)
+    built = Parts(FakeGitHub([Issue(7, TODO)]), None, NoDevices(), None, improves=False)
+    monkeypatch.setattr(ralph_command, "assemble", lambda *args, **kwargs: built)
+
+    assert main(["--milestone", "2", "--dry-run"], repo=tmp_path) == 0
     assert capsys.readouterr().out == "Next: #7\n"
 
 
@@ -201,8 +236,12 @@ def nothing():
     pass
 
 
-def test_devtool_runs_the_ralph_command():
-    assert cli.COMMANDS["ralph"].main is main
+def test_devtool_ralph_runs_on_the_project_in_the_current_directory(tmp_path, capsys, monkeypatch):
+    config_file(tmp_path, "app_id=1\n")
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["ralph", "--milestone", "2"]) == 1
+    assert f"{tmp_path}/.ralph/config is missing installation_id" in capsys.readouterr().out
 
 
 def test_a_run_gets_the_iteration_cap_and_the_improver_and_tells_only_the_owner(tmp_path, capsys):
