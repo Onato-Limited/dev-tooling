@@ -34,14 +34,12 @@ def load(path: Path) -> Config:
             f"Ralph loop can't start: {path} is missing. Add it with these keys, one name=value "
             f"per line: {', '.join(REQUIRED)}."
         )
-    lines = (line.strip() for line in path.read_text().splitlines())
-    pairs = (line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
-    settings = {name.strip(): value.strip() for name, value in pairs if value.strip()}
+    settings = read_settings(path)
     known = list(Config.__dataclass_fields__)
     if unknown := [name for name in settings if name not in known]:
         raise ConfigError(
             f"Ralph loop can't start: {path} has unknown keys: {', '.join(unknown)}. "
-            f"The keys are {', '.join(known)}."
+            f"The keys are {', '.join(known)}. Rename each to one of these, or remove it."
         )
     if missing := [name for name in REQUIRED if name not in settings]:
         raise ConfigError(
@@ -53,9 +51,27 @@ def load(path: Path) -> Config:
             f"Ralph loop can't start: merge_mode in {path} is {settings['merge_mode']!r}. Set it "
             "to auto (enable auto-merge on each PR) or label (add merge-when-green to each PR)."
         )
-    if not settings["board_number"].isdigit():
+    if not (settings["board_number"].isascii() and settings["board_number"].isdigit()):
         raise ConfigError(
             f"Ralph loop can't start: board_number in {path} is {settings['board_number']!r}. "
             "Set it to the project's number, from its URL (.../projects/<number>)."
         )
     return Config(**{**settings, "board_number": int(settings["board_number"])})
+
+
+def read_settings(path: Path) -> dict[str, str]:
+    """Each `name=value` line's value, trimmed; blank values count as absent."""
+    settings = {}
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ConfigError(
+                f"Ralph loop can't start: line {number} of {path} is {line!r}. Write each "
+                "setting as name=value, or start the line with # to make it a comment."
+            )
+        name, value = (part.strip() for part in line.split("=", 1))
+        if value:
+            settings[name] = value
+    return settings

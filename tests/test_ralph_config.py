@@ -4,10 +4,10 @@ from devtool.ralph_config import Config, ConfigError, load
 
 REQUIRED = """\
 # The GitHub App the loop works as; its key is in the login keychain.
-app_id=5872314
-installation_id=186281906
-app_slug=onato-agent
-board_owner=Onato-Limited
+app_id=123
+installation_id=456
+app_slug=some-app
+board_owner=some-org
 board_number=1
 merge_mode=label
 """
@@ -30,14 +30,14 @@ def test_a_full_config_gives_every_value(tmp_path):
         + "cleanup_list=scripts/devices list\n"
         + "cleanup_prune=scripts/devices prune\n"
         + "update_hook=scripts/after-merge.sh\n"
-        + "session_path=~/.claude/skills/sim-pool/scripts\n",
+        + "session_path=tools/bin\n",
     )
 
     assert load(path) == Config(
-        app_id="5872314",
-        installation_id="186281906",
-        app_slug="onato-agent",
-        board_owner="Onato-Limited",
+        app_id="123",
+        installation_id="456",
+        app_slug="some-app",
+        board_owner="some-org",
         board_number=1,
         merge_mode="label",
         review_check="claude / review",
@@ -46,7 +46,7 @@ def test_a_full_config_gives_every_value(tmp_path):
         cleanup_list="scripts/devices list",
         cleanup_prune="scripts/devices prune",
         update_hook="scripts/after-merge.sh",
-        session_path="~/.claude/skills/sim-pool/scripts",
+        session_path="tools/bin",
     )
 
 
@@ -64,6 +64,24 @@ def test_values_are_trimmed_and_a_value_may_hold_an_equals_sign(tmp_path):
     assert config.notify == "scripts/send.sh --to=owner"
 
 
+def test_a_commented_out_setting_is_ignored(tmp_path):
+    config = load(write(tmp_path, "# notify=scripts/notify.sh\n#merge_mode=auto\n" + REQUIRED))
+
+    assert (config.notify, config.merge_mode) == (None, "label")
+
+
+def test_a_line_that_is_not_name_equals_value_fails_naming_the_line(tmp_path):
+    path = write(tmp_path, REQUIRED + "notify scripts/notify.sh\n")
+
+    with pytest.raises(ConfigError) as error:
+        load(path)
+
+    assert str(error.value) == (
+        f"Ralph loop can't start: line 8 of {path} is 'notify scripts/notify.sh'. Write each "
+        "setting as name=value, or start the line with # to make it a comment."
+    )
+
+
 def test_a_missing_file_fails_naming_the_file_and_every_required_key(tmp_path):
     with pytest.raises(ConfigError) as error:
         load(tmp_path / ".ralph" / "config")
@@ -76,7 +94,7 @@ def test_a_missing_file_fails_naming_the_file_and_every_required_key(tmp_path):
 
 
 def test_missing_required_keys_fail_naming_each_one_and_the_file(tmp_path):
-    path = write(tmp_path, "app_id=5872314\napp_slug=\nmerge_mode=auto\n")
+    path = write(tmp_path, "app_id=123\napp_slug=\nmerge_mode=auto\n")
 
     with pytest.raises(ConfigError) as error:
         load(path)
@@ -96,7 +114,8 @@ def test_an_unknown_key_fails_naming_it_and_the_keys_there_are(tmp_path):
     assert str(error.value) == (
         f"Ralph loop can't start: {path} has unknown keys: notfy. The keys are app_id, "
         "installation_id, app_slug, board_owner, board_number, merge_mode, review_check, "
-        "audit_check, notify, cleanup_list, cleanup_prune, update_hook, session_path."
+        "audit_check, notify, cleanup_list, cleanup_prune, update_hook, session_path. Rename each "
+        "to one of these, or remove it."
     )
 
 
@@ -112,13 +131,14 @@ def test_a_merge_mode_other_than_auto_or_label_fails_naming_the_two(tmp_path):
     )
 
 
-def test_a_board_number_that_is_not_a_number_fails_naming_the_key(tmp_path):
-    path = write(tmp_path, REQUIRED.replace("board_number=1", "board_number=one"))
+@pytest.mark.parametrize("value", ["one", "²"])
+def test_a_board_number_that_is_not_a_number_fails_naming_the_key(tmp_path, value):
+    path = write(tmp_path, REQUIRED.replace("board_number=1", f"board_number={value}"))
 
     with pytest.raises(ConfigError) as error:
         load(path)
 
     assert str(error.value) == (
-        f"Ralph loop can't start: board_number in {path} is 'one'. Set it to the project's "
+        f"Ralph loop can't start: board_number in {path} is {value!r}. Set it to the project's "
         "number, from its URL (.../projects/<number>)."
     )
