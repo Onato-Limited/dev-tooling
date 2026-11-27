@@ -102,7 +102,7 @@ def audit(push: Push, required: list[str]) -> list[Violation]:
     return violations
 
 
-def pushed_commits(repo: str, before: str, after: str, rest: Rest) -> list[dict]:
+def pushed_commits(repo: str, before: str, after: str, rest: Rest) -> tuple[list[dict], int]:
     """The commits the push added, past the 20 the push event lists, and how many there are."""
     commits, page = [], 1
     while True:
