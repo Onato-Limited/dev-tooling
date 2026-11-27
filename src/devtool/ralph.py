@@ -322,12 +322,13 @@ class _Loop:
         if pr is not None:
             self.opened.append(pr.number)
         self.opened += outcome.also
+        if reason := stuck_reason(outcome, pr):
+            self.needs_owner(issue.number, reason)  # its PRs, and any others, are the owner's
+            return
         for other in outcome.also:
             if not self.github.pull_request(other).merged:
                 self.wait_on(other, None)
-        if reason := stuck_reason(outcome, pr):
-            self.needs_owner(issue.number, reason)
-        elif pr.merged:  # without a PR, stuck_reason gave a reason
+        if pr.merged:  # without a PR, stuck_reason gave a reason
             self.remove_worktree(issue.number)
         else:
             self.wait_on(pr.number, issue.number)

@@ -506,6 +506,7 @@ def test_other_prs_a_session_opened_are_brought_up_to_date_and_waited_for():
 
     assert github.updates == [127]
     assert clock.sleeps == [60]
+    assert session.removed == [18]
 
 
 def test_the_loop_arranges_the_merge_of_each_pr_it_waits_for():
@@ -521,9 +522,10 @@ def test_the_loop_arranges_the_merge_of_each_pr_it_waits_for():
     assert github.arranged == [127, 130]
 
 
-def test_a_stuck_issues_pr_is_left_to_the_owner_to_merge():
+def test_a_stuck_issues_prs_are_left_to_the_owner_to_merge():
     github = FakeGitHub([Issue(7, TODO)])
-    stuck = (Outcome(pr=40, needs_human="pick a licence"), PullRequest(number=40), True)
+    github.prs[41] = PullRequest(number=41)
+    stuck = (Outcome(pr=40, needs_human="pick a licence", also=(41,)), PullRequest(40), True)
     session = FakeSession(github, {7: stuck})
 
     loop(github, session)
@@ -555,3 +557,38 @@ def test_a_merged_pr_that_still_reads_as_held_is_simply_merged():
     stop = loop(github, session, clock=clock)
 
     assert (stop, github.comments) == ("Ralph loop stopped: milestone complete.", [])
+
+
+@pytest.mark.parametrize(
+    "pr",
+    [
+        PullRequest(number=40, unresolved_threads=1),
+        PullRequest(number=40, blocked_with_checks_passing=True),
+    ],
+    ids=["a thread, but checks still running", "green, but held by something else"],
+)
+def test_a_pr_with_threads_but_not_green_or_green_but_no_threads_is_still_waited_for(pr):
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: (Outcome(pr=40), pr, True)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(7, 40)
+
+    loop(github, session, clock=clock)
+
+    assert (clock.sleeps, github.comments) == ([60], [])
+
+
+def test_a_pr_that_merged_while_it_still_reads_as_behind_is_not_updated():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: pending_run(40)})
+    clock = Clock()
+
+    def merged_but_behind():
+        github.merge(7, 40)
+        github.prs[40] = PullRequest(number=40, merged=True, behind=True)
+
+    clock.on_sleep = merged_but_behind
+
+    stop = loop(github, session, clock=clock)
+
+    assert (github.updates, stop) == ([], "Ralph loop stopped: milestone complete.")
