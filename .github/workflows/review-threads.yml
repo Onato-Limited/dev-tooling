@@ -32,6 +32,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: >
-          uv run --quiet --frozen --no-dev --project .devtool devtool review-threads
-          --repo "$GITHUB_REPOSITORY" --pr "$PR"
+          EVENT: ${{ github.event_name }}
+        # Throwaway for #119: a pull_request run reads the threads, then holds its result.
+        run: |
+          set +e
+          uv run --quiet --frozen --no-dev --project .devtool devtool review-threads \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR"
+          code=$?
+          if [ "$EVENT" = pull_request ]; then sleep 240; fi
+          exit $code
