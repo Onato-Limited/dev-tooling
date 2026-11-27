@@ -28,7 +28,7 @@ def test_an_unknown_command_exits_2_and_lists_the_commands(capsys):
     assert "invalid choice: 'no-such-command'" in err
     assert (
         "choose from pr-size, pr-shape, protected-paths, required-checks, secrets-report, "
-        "review-verdict, review-comment" in err
+        "review-verdict, review-comment, review-prompt" in err
     )
 
 
