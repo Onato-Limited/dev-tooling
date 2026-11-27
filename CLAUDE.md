@@ -25,7 +25,8 @@ or read from the caller's repo, never written here.
 # Releases
 
 `pyproject.toml`'s version is the release. On a merge to `main`, `release.yml` tags `v<version>`
-and moves `v<major>` to it if that tag is new; a merge that leaves the version alone releases
+and moves `v<major>` to it if that tag is new, then creates a GitHub Release for `v<version>`
+with notes generated from the merged PR titles. A merge that leaves the version alone releases
 nothing. `v*.*.*` tags are immutable (a tag ruleset); only the major tag moves. A breaking change
 to a command or a workflow's inputs is a new major.
 
