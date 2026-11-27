@@ -8,19 +8,26 @@ import pytest
 
 from devtool.ralph import POLL_SECONDS, Issue, Outcome
 from devtool.ralph_session import Bot, ClaudeSession
+from devtool.ralph_token import TokenError
 
 
 class FakeTokens:
-    """Mints ghs_1, ghs_2, … in turn."""
+    """Mints ghs_1, ghs_2, … in turn; the mints numbered in `fails` raise instead."""
 
     def __init__(self):
         self.minted = 0
+        self.fails = set()
+        self.env_fails = None  # what session_env raises, if it does
 
     def session_env(self, environ):
+        if self.env_fails:
+            raise TokenError(self.env_fails)
         return {**environ, "GH_TOKEN": "ghs_bot"}
 
     def current(self):
         self.minted += 1
+        if self.minted in self.fails:
+            raise TokenError("GitHub refused the token request: HTTP 502")
         return f"ghs_{self.minted}"
 
 
@@ -37,6 +44,7 @@ class FakeProcesses:
         self.fails = {}  # git subcommand, one word or two → the CompletedProcess it fails with
         self.outputs = {}  # git subcommand, or another command's first two words → its stdout
         self.on_wait = nothing  # called with claude's start kwargs at each wait
+        self.killed_with_token = []  # at each kill, whether the token file was still there
 
     def start(self, args, **kwargs):
         self.calls.append((args, kwargs))
@@ -62,7 +70,13 @@ class FakeProcess:
         self.processes = processes
         self.kwargs = kwargs
 
-    def wait(self, timeout):
+    def kill(self):
+        self.processes.killed_with_token.append(token_file(self.kwargs).exists())
+        self.killed = True
+
+    def wait(self, timeout=None):
+        if getattr(self, "killed", False):
+            return -9
         self.processes.on_wait(self.kwargs)
         self.processes.waits.append(timeout)
         if len(self.processes.waits) <= self.processes.polls:
@@ -89,7 +103,7 @@ def session(tmp_path, processes):
     return repo, ClaudeSession(
         repo=repo,
         branch_prefix="someone",
-        bot=Bot("some-app[bot]", 123),
+        bot=Bot("some-app", 123),
         tokens=FakeTokens(),
         session_path=None,
         run=processes,
@@ -195,7 +209,14 @@ def test_while_claude_runs_the_session_calls_while_running_every_poll(tmp_path):
 def test_each_session_starts_fresh_even_when_the_loop_runs_inside_claude_code(tmp_path):
     processes = FakeProcesses(result("PR: #52"))
     _, claude = session(tmp_path, processes)
-    claude.environ = {"PATH": "/usr/bin", "CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "parent"}
+    claude.environ = {
+        "PATH": "/usr/bin",
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ID": "parent",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "4242",
+    }
 
     claude.work(Issue(7, "In progress"), nothing)
 
@@ -204,17 +225,18 @@ def test_each_session_starts_fresh_even_when_the_loop_runs_inside_claude_code(tm
     assert behind_session_bin(env["PATH"]) == "/usr/bin"
 
 
-def test_the_users_own_claude_settings_reach_the_session(tmp_path):
+@pytest.mark.parametrize(
+    "name", ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"]
+)
+def test_the_users_own_claude_settings_reach_the_session(tmp_path, name):
     processes = FakeProcesses(result("PR: #52"))
     _, claude = session(tmp_path, processes)
-    claude.environ = {"PATH": "/usr/bin", "CLAUDECODE": "1", "CLAUDE_CONFIG_DIR": "/cfg"}
+    claude.environ = {"PATH": "/usr/bin", "CLAUDECODE": "1", name: "set"}
 
     claude.work(Issue(7, "In progress"), nothing)
 
     env = processes.claude()[1]["env"]
-    assert [(k, v) for k, v in env.items() if k.startswith("CLAUDE")] == [
-        ("CLAUDE_CONFIG_DIR", "/cfg")
-    ]
+    assert [(k, v) for k, v in env.items() if k.startswith("CLAUDE")] == [(name, "set")]
 
 
 def test_the_configured_session_path_goes_first_on_the_sessions_path(tmp_path):
@@ -228,17 +250,28 @@ def test_the_configured_session_path_goes_first_on_the_sessions_path(tmp_path):
     assert behind_session_bin(env["PATH"]) == "/opt/tools/bin:/usr/bin"
 
 
-def test_a_failed_pr_lookup_when_resuming_needs_a_human_and_starts_no_claude(tmp_path):
+@pytest.mark.parametrize(
+    ("token_fails", "commands", "reason"),
+    [
+        (None, ["git", "git", "git", "gh"], "gh pr list failed: HTTP 401: Bad credentials"),
+        ("HTTP 502", ["git", "git", "git"], "the bot's token: HTTP 502"),
+    ],
+    ids=["the lookup", "the bot's token"],
+)
+def test_a_failed_pr_lookup_when_resuming_needs_a_human_and_starts_no_claude(
+    tmp_path, token_fails, commands, reason
+):
     processes = FakeProcesses(result("PR: #52"))
     processes.outputs = {"for-each-ref": "refs/heads/someone/7-ralph\n"}
     error = "HTTP 401: Bad credentials\n"
     processes.fails = {"gh pr": subprocess.CompletedProcess([], 1, "", error)}
     _, claude = session(tmp_path, processes)
+    claude.tokens.env_fails = token_fails
 
     outcome = claude.work(Issue(7, "In progress"), nothing)
 
-    assert outcome == Outcome(pr=None, needs_human="gh pr list failed: HTTP 401: Bad credentials")
-    assert [args[0] for args, _ in processes.calls] == ["git", "git", "git", "gh"]
+    assert outcome == Outcome(pr=None, needs_human=reason)
+    assert [args[0] for args, _ in processes.calls] == commands
 
 
 def test_a_worktree_that_cannot_be_made_needs_a_human_and_starts_no_claude(tmp_path):
@@ -326,9 +359,17 @@ def test_a_session_starts_with_a_freshly_minted_token_in_a_file_only_it_can_read
     assert (seen["token"], oct(seen["mode"] & 0o777)) == ("ghs_1", "0o600")
 
 
-def test_the_token_file_gets_a_new_token_once_45_minutes_pass_and_not_before(tmp_path):
+@pytest.mark.parametrize(
+    ("fails", "tokens"),
+    [(set(), ["ghs_1", "ghs_1", "ghs_2", "ghs_2"]), ({2}, ["ghs_1", "ghs_1", "ghs_1", "ghs_3"])],
+    ids=["renewed", "a failed renewal keeps the old token and is tried again"],
+)
+def test_the_token_file_gets_a_new_token_once_45_minutes_pass_and_not_before(
+    tmp_path, fails, tokens
+):
     processes = FakeProcesses(result("PR: #52"), polls=3)
     _, claude = session(tmp_path, processes)
+    claude.tokens.fails = fails
     clock = [datetime(2026, 11, 23, 1, 0, 0)]
     claude.now = lambda: clock[0]
     seen = []
@@ -338,10 +379,10 @@ def test_the_token_file_gets_a_new_token_once_45_minutes_pass_and_not_before(tmp
         clock[0] += timedelta(minutes=30) if len(seen) == 1 else timedelta(minutes=15)
 
     processes.on_wait = on_wait
-    claude.work(Issue(7, "In progress"), nothing)
+    outcome = claude.work(Issue(7, "In progress"), nothing)
 
-    # Waits at 0, 30, 45 and 60 minutes: renewed at 45, and next due at 90.
-    assert seen == ["ghs_1", "ghs_1", "ghs_2", "ghs_2"]
+    # Waits at 0, 30, 45 and 60 minutes: renewed at 45 (or, failing that, at 60).
+    assert (seen, outcome) == (tokens, Outcome(pr=52))
 
 
 def test_the_session_is_told_where_its_token_file_is_and_given_no_token_itself(tmp_path):
@@ -416,6 +457,7 @@ def test_the_token_file_is_deleted_when_the_session_ends_however_it_ends(tmp_pat
 
     private = token_file(processes.claude()[1]).parent
     assert [path for path in [private] if path.exists()] == []
+    assert processes.killed_with_token == [True]  # claude stopped before its token went
 
 
 def test_the_session_commits_and_pushes_as_the_bot_not_the_owner(tmp_path):

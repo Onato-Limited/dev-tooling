@@ -1,5 +1,6 @@
 """One Ralph loop iteration: a fresh `claude -p` on an issue, in that issue's own worktree."""
 
+import contextlib
 import json
 import re
 import shlex
@@ -12,20 +13,27 @@ from pathlib import Path
 from typing import Protocol
 
 from devtool.ralph import POLL_SECONDS, Issue, Outcome
-from devtool.ralph_token import TokenFile
+from devtool.ralph_token import TokenError, TokenFile
 
 STREAM = ["--permission-mode", "auto", "--output-format", "stream-json", "--verbose"]
 
 
-# What a user sets to choose how `claude` logs in and where its config is; every other
-# CLAUDE* variable is one a Claude Code parent sets, which would make `claude` its child.
-USER_CLAUDE_SETTINGS = frozenset(
-    {
-        "CLAUDE_CONFIG_DIR",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "CLAUDE_CODE_USE_BEDROCK",
-        "CLAUDE_CODE_USE_VERTEX",
-    }
+# What a Claude Code parent sets in its children's environment, which would make `claude` one of
+# them. Only these go: the rest of CLAUDE* (config dir, provider, login) is the user's.
+PARENT_MARKERS = frozenset(
+    [
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_NOTES_DIR",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_EFFORT",
+        "CLAUDE_PID",
+    ]
 )
 
 
@@ -37,15 +45,19 @@ class SessionTokens(Protocol):
 
 @dataclass(frozen=True)
 class Bot:
-    """The GitHub App's bot user: `<app_slug>[bot]` and its user ID."""
+    """The GitHub App's bot user, from the config's `app_slug` and the bot's user ID."""
 
-    login: str
+    app_slug: str
     user_id: int
 
+    @property
+    def login(self) -> str:
+        return f"{self.app_slug}[bot]"
+
     def git_env(self) -> dict[str, str]:
-        """Commits as the bot, pushed over HTTPS with the token file's token: the remote may be
-        SSH, which would push with the owner's key, and the helper list is emptied first so the
-        keychain's owner credentials aren't offered."""
+        """Commits as the bot, pushed over HTTPS with the token file's token: an SSH remote would
+        push with the owner's key, and the helper list is emptied first
+        so the keychain's owner credentials aren't offered."""
         email = f"{self.user_id}+{self.login}@users.noreply.github.com"
         return {
             "GIT_AUTHOR_NAME": self.login,
@@ -115,13 +127,17 @@ class ClaudeSession:
 
     def _resuming(self, branch: str) -> tuple[str, str | None]:
         """The prompt's note that the session resumes, or what failed in looking for its PR."""
+        try:
+            env = self.tokens.session_env(own_environ(self.environ))
+        except TokenError as error:
+            return "", f"the bot's token: {error}"
         done = self.run(
             ["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number"]
             + ["--jq", ".[].number"],
             capture_output=True,
             text=True,
             cwd=self.repo,
-            env=self.tokens.session_env(own_environ(self.environ)),
+            env=env,
         )
         if done.returncode != 0:
             return "", f"gh pr list failed: {done.stderr.strip()}"
@@ -169,9 +185,14 @@ class ClaudeSession:
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            while not exited(process):
-                token.refresh()
-                while_running()
+            try:
+                while not exited(process):
+                    with contextlib.suppress(TokenError):  # the old token has a while left
+                        token.refresh()
+                    while_running()
+            finally:
+                process.kill()  # before its token and tools go with the directory
+                process.wait()
         return final_result(log), log
 
 
@@ -185,9 +206,7 @@ def exited(process: subprocess.Popen) -> bool:
 
 def own_environ(environ: dict[str, str]) -> dict[str, str]:
     """Without the CLAUDE* variables a Claude Code parent sets, which make `claude` a child."""
-    return {
-        k: v for k, v in environ.items() if not k.startswith("CLAUDE") or k in USER_CLAUDE_SETTINGS
-    }
+    return {k: v for k, v in environ.items() if k not in PARENT_MARKERS}
 
 
 def without_token(environ: dict[str, str]) -> dict[str, str]:

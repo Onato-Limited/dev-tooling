@@ -139,10 +139,11 @@ class TokenFile:
             self._write()
 
     def _write(self) -> None:
-        self.minted = self.clock()
+        now, token = self.clock(), self.mint()  # a mint that fails leaves the old token due
         # Renamed into place, so a `gh` reading it mid-renewal never finds it empty.
         fresh = self.path.with_suffix(".new")
         fd = os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as out:
-            out.write(self.mint())
+            out.write(token)
         os.replace(fresh, self.path)
+        self.minted = now
