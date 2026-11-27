@@ -2,10 +2,10 @@ import subprocess
 from dataclasses import replace
 
 import pytest
-from ralph_fakes import FakeGitHub
+from ralph_fakes import FakeGitHub, FakeSession
 
 from devtool import cli, ralph_command
-from devtool.ralph import TODO, GitHubError, Issue
+from devtool.ralph import TODO, GitHubError, Issue, Outcome, PullRequest
 from devtool.ralph_command import NoDevices, Parts, assemble, branch_prefix, main
 from devtool.ralph_config import Config, ConfigError
 from devtool.ralph_session import Bot
@@ -13,24 +13,16 @@ from devtool.ralph_token import TokenError
 from devtool.ralph_wiring import CommandDevices, DevicesError
 
 CONFIG = Config(
-    app_id="1",
-    installation_id="2",
-    app_slug="some-app",
-    board_owner="someone",
-    board_number=3,
-    merge_mode="label",
-    audit_check="audit / main",
+    app_id="1", installation_id="2", app_slug="some-app", board_owner="someone", board_number=3,
+    merge_mode="label", review_check="review / claude", audit_check="audit / main",
     update_hook="scripts/after-merge",
-)
+)  # fmt: skip
 REQUIRED = (
     "app_id=1\ninstallation_id=2\napp_slug=some-app\nboard_owner=someone\nboard_number=3\n"
     "merge_mode=auto\n"
 )
-GH = {
-    ("repo", "view"): "owner/repo\n",
-    ("api", "user"): "The-Owner\n",
-    ("api", "users/some-app[bot]"): "123\n",
-}
+GH = {("repo", "view"): "owner/repo\n", ("api", "user"): "The-Owner\n"}
+GH[("api", "users/some-app[bot]")] = "123\n"
 
 
 def gh(args, stdin):
@@ -56,13 +48,22 @@ def test_the_adapter_and_session_are_built_from_the_config_and_what_github_says(
     assert f"{github.owner}/{github.repo} {github.board_owner}/{github.board_number}" == (
         "owner/repo someone/3"
     )
-    assert [github.audit_check, github.merge_mode, github.approver] == [
-        "audit / main", "label", "The-Owner"
+    assert [github.review_check, github.audit_check, github.merge_mode, github.approver] == [
+        "review / claude", "audit / main", "label", "The-Owner"
     ]  # fmt: skip
     assert [session.bot, session.update_hook, session.repo] == [
         Bot("some-app", 123), "scripts/after-merge", tmp_path
     ]  # fmt: skip
     assert github.branch_prefix == session.branch_prefix == "someone"
+
+
+def test_the_check_before_the_loop_mints_a_token(tmp_path):
+    minted = []
+    tokens = type("Tokens", (), {"current": lambda self: minted.append(1) or "ghs_bot"})()
+
+    assemble(CONFIG, tmp_path, gh, git_identity(), subprocess.Popen, {}, tokens=tokens).preflight()
+
+    assert minted == [1]
 
 
 def test_a_relative_session_path_is_resolved_against_the_checkout(tmp_path):
@@ -99,18 +100,12 @@ def test_the_improver_runs_only_when_the_project_has_its_prompt(tmp_path):
     assert parts(tmp_path).improves is True
 
 
-@pytest.mark.parametrize(
-    ("user", "email", "prefix"),
-    [
-        ("someone", "other@example.com", "someone"),
-        ("", "123+someone@users.noreply.github.com", "someone"),
-        ("", "someone@example.com", "someone"),
-    ],
-)
-def test_the_branch_prefix_is_the_github_user_or_else_the_emails_name(
-    tmp_path, user, email, prefix
-):
-    assert branch_prefix(git_identity(user, email), tmp_path) == prefix
+def test_the_branch_prefix_is_the_github_user_or_else_the_emails_name_or_says_to_set_one(tmp_path):
+    named = [("someone", "x@example.com"), ("", "123+someone@users.noreply.github.com"),
+             ("", "someone@example.com")]  # fmt: skip
+    assert {branch_prefix(git_identity(*identity), tmp_path) for identity in named} == {"someone"}
+    with pytest.raises(ConfigError, match="git config github.user <login>"):
+        branch_prefix(git_identity(user="", email=""), tmp_path)
 
 
 def config_file(tmp_path, text=REQUIRED):
@@ -142,9 +137,7 @@ def test_a_bad_config_prints_its_error_and_exits_1_before_touching_github(tmp_pa
 
 def test_a_dry_run_prints_the_next_issue_and_starts_nothing(tmp_path, capsys):
     config_file(tmp_path)
-    built = Parts(
-        FakeGitHub([Issue(7, TODO)]), session=None, devices=NoDevices(), notify=None, improves=False
-    )
+    built = Parts(FakeGitHub([Issue(7, TODO)]), None, NoDevices(), None, improves=False)
 
     assert main(["--milestone", "2", "--dry-run"], repo=tmp_path, connect=Connect(built)) == 0
     assert capsys.readouterr().out == "Next: #7\n"
@@ -155,16 +148,17 @@ def test_a_lookup_that_fails_stops_with_its_error_before_any_session(tmp_path, c
     failed = GitHubError("gh api users/some-app[bot] failed: HTTP 404")
 
     assert main(["--milestone", "2"], repo=tmp_path, connect=Connect(fails=failed)) == 1
-    assert capsys.readouterr().out == (
-        "Ralph loop stopped: gh api users/some-app[bot] failed: HTTP 404\n"
-    )
+    assert capsys.readouterr().out == f"Ralph loop stopped: {failed}\n"
 
 
 class Failing:
-    """A session, or devices, whose first call raises `error`."""
+    """A session, devices, or the check before the loop, whose first call raises `error`."""
 
     def __init__(self, error):
         self.error = error
+
+    def __call__(self):
+        raise self.error
 
     def work(self, issue, while_running):
         raise self.error
@@ -173,64 +167,68 @@ class Failing:
         raise self.error
 
 
+NO_KEY = "Ralph loop can't start: no private key for the some-app GitHub App in the login keychain"
+NO_MINT = "Ralph loop can't get a GitHub token: POST /app/installations/2/access_tokens: HTTP 502"
+NO_LIST = "scripts/devices list failed (exit 1): no pool"
+
+
 @pytest.mark.parametrize(
-    "error",
+    ("where", "error", "stop"),
     [
-        TokenError("GitHub refused the token request: HTTP 502"),
-        DevicesError("scripts/devices list failed (exit 1): no pool"),
+        ("start", TokenError(NO_KEY), NO_KEY),
+        ("session", TokenError(NO_MINT), NO_MINT),
+        ("devices", DevicesError(NO_LIST), f"Ralph loop stopped: {NO_LIST}"),
     ],
-    ids=["a token that can't be minted", "a device list that fails"],
+    ids=["a key missing at the start", "a mint that fails in a session", "a device list"],
 )
-def test_an_error_from_the_running_loop_is_the_stop_message_and_exits_1(tmp_path, error):
+def test_an_error_stops_the_loop_through_notify_only_and_exits_1(
+    tmp_path, capsys, where, error, stop
+):
     config_file(tmp_path)
     notes = []
-    github = FakeGitHub([] if isinstance(error, DevicesError) else [Issue(7, TODO)])
-    built = Parts(github, Failing(error), Failing(error), notes.append, improves=False)
+    github = FakeGitHub([] if where == "devices" else [Issue(7, TODO)])
+    fail = Failing(error)
+    built = Parts(github, fail, fail, notes.append, False, fail if where == "start" else nothing)
 
     assert main(["--milestone", "2"], repo=tmp_path, connect=Connect(built)) == 1
-    assert notes == [f"Ralph loop stopped: {error}"]
+    assert notes == [stop]  # a TokenError already says "Ralph loop can't …"
+    assert capsys.readouterr().out == ""
+    if where == "start":  # nothing was taken, so no issue is left in In progress
+        assert github.moves == []
+
+
+def nothing():
+    pass
 
 
 def test_devtool_runs_the_ralph_command():
     assert cli.COMMANDS["ralph"].main is main
 
 
-def test_without_a_git_identity_the_branch_prefix_is_a_config_error_naming_the_fix(tmp_path):
-    with pytest.raises(ConfigError, match="git config github.user <login>"):
-        branch_prefix(git_identity(user="", email=""), tmp_path)
-
-
-def test_a_run_that_ends_tells_the_owner_and_exits_0(tmp_path):
+def test_a_run_gets_the_iteration_cap_and_the_improver_and_tells_only_the_owner(tmp_path, capsys):
     config_file(tmp_path)
     notes = []
-    built = Parts(FakeGitHub([]), None, NoDevices(), notes.append, improves=False)
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: (Outcome(pr=40), PullRequest(40), False)})
+    built = Parts(github, session, NoDevices(), notes.append, improves=True)
 
-    assert main(["--milestone", "2"], repo=tmp_path, connect=Connect(built)) == 0
-    assert notes == ["Ralph loop stopped: milestone complete."]
+    assert (
+        main(["--milestone", "2", "--max-iterations", "1"], repo=tmp_path, connect=Connect(built))
+        == 0
+    )
+    assert notes[-1].startswith("Ralph loop stopped: iteration cap (1) reached.")
+    assert (session.improved, capsys.readouterr().out) == ([((40,), 1)], "")
 
 
-def test_a_live_run_mints_as_the_configured_app_and_reads_no_key_until_it_mints(
-    tmp_path, monkeypatch
-):
-    built = {}
-    ran = []
+def test_a_live_run_mints_as_the_configured_app_reading_its_key_only_to_sign(tmp_path, monkeypatch):
+    built, read = {}, []
     monkeypatch.setattr(ralph_command, "assemble", lambda *args, **kwargs: built.update(kwargs))
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: ran.append(args))
-
-    ralph_command.live(CONFIG, tmp_path)
-
-    assert (built["tokens"].app_id, built["tokens"].installation_id, ran) == ("1", "2", [])
-
-
-def test_a_live_runs_signer_reads_the_apps_key_from_the_keychain_when_it_signs(
-    tmp_path, monkeypatch
-):
-    built = {}
-    monkeypatch.setattr(ralph_command, "assemble", lambda *args, **kwargs: built.update(kwargs))
-    monkeypatch.setattr(ralph_command, "keychain_key", lambda slug, run: f"key of {slug}")
+    monkeypatch.setattr(ralph_command, "keychain_key", lambda slug, run: read.append(slug) or "key")
     signer = lambda key, run: lambda data: f"{key} signed {data.decode()}".encode()  # noqa: E731
     monkeypatch.setattr(ralph_command, "openssl_signer", signer)
 
     ralph_command.live(CONFIG, tmp_path)
 
-    assert built["tokens"].sign(b"claims") == b"key of some-app signed claims"
+    tokens = built["tokens"]
+    assert (tokens.app_id, tokens.installation_id, read) == ("1", "2", [])
+    assert (tokens.sign(b"claims"), read) == (b"key signed claims", ["some-app"])

@@ -30,11 +30,11 @@ class Parts:
     devices: Devices
     notify: Callable[[str], None]
     improves: bool  # the project has an improver prompt
+    # Mints a token before the loop: a missing key then stops it before an issue moves.
+    preflight: Callable[[], object] = lambda: None
 
 
 class NoDevices:
-    """A project without cleanup commands has no devices to prune."""
-
     def issues(self) -> list[int]:
         return []
 
@@ -89,7 +89,8 @@ def assemble(
     if config.cleanup_list and config.cleanup_prune:
         devices = CommandDevices(config.cleanup_list, config.cleanup_prune, repo, run)
     improves = (repo / ".ralph" / "IMPROVE.md").exists()
-    return Parts(github, session, devices, notifier(config.notify, repo, run), improves)
+    notify = notifier(config.notify, repo, run)
+    return Parts(github, session, devices, notify, improves, lambda: tokens.current())
 
 
 def branch_prefix(run: Runner, repo: Path) -> str:
@@ -137,6 +138,7 @@ def main(
         if args.dry_run:
             print(dry_run(args.milestone, parts.github))
             return 0
+        parts.preflight()
         ralph.run(
             args.milestone,
             parts.github,
@@ -152,6 +154,8 @@ def main(
         print(error)
         return 1
     except (GitHubError, TokenError, DevicesError) as error:
-        (parts.notify if parts else print)(f"Ralph loop stopped: {error}")
+        said = str(error)  # a TokenError already says "Ralph loop can't …"
+        stop = said if said.startswith("Ralph loop") else f"Ralph loop stopped: {said}"
+        (parts.notify if parts else print)(stop)
         return 1
     return 0
