@@ -161,3 +161,32 @@ def test_a_missing_or_unreadable_execution_file_fails_closed(tmp_path, capsys):
             f"Review: no run result in {execution}. A review counts only once its run "
             "finishes; re-run the review job, and check its Review step's log if it fails again.\n"
         )
+
+
+def test_a_run_that_ended_in_an_error_fails_printing_the_error(tmp_path, capsys):
+    output = write_output(tmp_path, "APPROVE")
+    execution = write_run(
+        tmp_path,
+        {"is_error": True, "result": "API Error: 404 model: claude-x not found", "num_turns": 1},
+    )
+
+    code = run(output, execution)
+
+    assert code == 1
+    assert capsys.readouterr().out == (
+        "Review: the Claude run ended in an error: API Error: 404 model: claude-x not found\n"
+        "  Fix the cause it names (the model, effort or CLAUDE_CODE_OAUTH_TOKEN the workflow was "
+        "given), then re-run the review job.\n"
+    )
+
+
+def test_an_error_run_without_error_text_still_fails_and_says_so(tmp_path, capsys):
+    output = write_output(tmp_path, "APPROVE")
+    execution = write_run(tmp_path, {"is_error": True})
+
+    code = run(output, execution)
+
+    assert code == 1
+    assert capsys.readouterr().out.startswith(
+        "Review: the Claude run ended in an error: (the run gave no error text)\n"
+    )
