@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from devtool.ralph import REQUIRED_WORKFLOWS
+from devtool.ralph import REQUIRED_WORKFLOWS, GitHubError
 
 
 class FakeGitHub:
@@ -16,6 +16,9 @@ class FakeGitHub:
         self.workflows = {name: True for name in REQUIRED_WORKFLOWS}
         self.prs = {}
         self.open_prs = set()  # issues an open PR closes or works on
+        self.updates = []  # PRs brought up to date with main, in order
+        self.pr_fails = []  # errors the next PR reads raise, one each
+        self.arranged = []  # PRs whose merge the loop arranged, in order
 
     def board_workflows(self):
         return self.workflows
@@ -31,7 +34,12 @@ class FakeGitHub:
         ]
 
     def pull_request(self, number):
+        if self.pr_fails:
+            raise GitHubError(self.pr_fails.pop(0))
         return self.prs[number]
+
+    def arrange_merge(self, pr):
+        self.arranged.append(pr)
 
     def has_open_pr(self, issue):
         return issue in self.open_prs
@@ -60,16 +68,26 @@ class FakeSession:
         self.removed = []
         self.removal_fails = {}  # issue → what failed
         self.while_running = {}  # issue → what happens on GitHub while its session runs
+        self.update_fails = {}  # PR → why it couldn't be brought up to date
+        self.updates_at_end = {}  # issue → the PRs updated by the time its session ended
 
     def remove(self, issue):
         self.removed.append(issue)
         return self.removal_fails.get(issue)
+
+    def update(self, pr):
+        if failed := self.update_fails.get(pr.number):
+            return failed
+        self.github.updates.append(pr.number)
+        self.github.prs[pr.number] = replace(pr, behind=False)
+        return None
 
     def work(self, issue, while_running):
         self.worked.append(issue.number)
         self.status_at_start.append(self.github.issues[issue.number].status)
         self.while_running.get(issue.number, lambda: None)()
         while_running()
+        self.updates_at_end[issue.number] = list(self.github.updates)
         outcome, pr, pending = self.runs[issue.number]
         if pr is not None:
             self.github.prs[pr.number] = pr
