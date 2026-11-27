@@ -489,7 +489,9 @@ def test_the_session_commits_and_pushes_as_the_bot_not_the_owner(tmp_path):
     assert behind_session_bin(env["PATH"]) == "/usr/bin"
 
 
-def test_the_improver_reviews_the_merged_prs_in_a_detached_worktree_of_main(tmp_path):
+def test_the_improver_reviews_the_merged_prs_in_a_detached_worktree_of_main_then_removes_it(
+    tmp_path,
+):
     processes = FakeProcesses(result("Done.\nPR: #63\nPR: #64\nPROPOSED: #65\n"))
     repo, claude = session(tmp_path, processes)
 
@@ -505,6 +507,7 @@ def test_the_improver_reviews_the_merged_prs_in_a_detached_worktree_of_main(tmp_
     assert args[2] == "Review PRs #60, #61, #62.\n"
     assert kwargs["cwd"] == worktree
     assert (repo / ".ralph" / "logs" / "20261123-010203-improve.log").exists()
+    assert processes.calls[-1][0] == ["git", "-C", str(repo), "worktree", "remove", str(worktree)]
 
 
 def test_an_improver_without_a_worktree_needs_a_human_and_starts_no_claude(tmp_path):
@@ -571,16 +574,6 @@ def test_removing_an_issue_with_no_worktree_or_branch_left_over_succeeds(tmp_pat
     assert [args for args, _ in processes.calls] == [
         ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", "refs/heads/someone/7-ralph"],
     ]
-
-
-def test_the_improvers_worktree_is_removed_once_its_session_ends(tmp_path):
-    processes = FakeProcesses(result("PR: #63"))
-    repo, claude = session(tmp_path, processes)
-
-    claude.improve((60,), nothing)
-
-    worktree = tmp_path / "checkout-improve-20261123-010203"
-    assert processes.calls[-1][0] == ["git", "-C", str(repo), "worktree", "remove", str(worktree)]
 
 
 def test_an_improver_worktree_that_cannot_be_removed_is_reported_with_its_prs(tmp_path):

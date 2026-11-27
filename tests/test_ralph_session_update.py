@@ -128,14 +128,22 @@ def test_a_conflict_the_update_hook_resolves_is_committed_and_pushed(tmp_path, h
     assert len(parents) == 2
 
 
-def test_an_update_hook_that_fails_fails_the_update_and_pushes_nothing(tmp_path):
-    seed, session = repos(tmp_path, update_hook="echo no entries file >&2; exit 3")
+@pytest.mark.parametrize(
+    ("hook", "message"),
+    [
+        ("echo no entries file >&2; exit 3", "update_hook failed (exit 3): no entries file"),
+        ("git reset -q --hard HEAD^", "main is not merged in after update_hook"),
+    ],
+    ids=["exits non-zero", "undoes the merge"],
+)
+def test_an_update_hook_that_fails_fails_the_update_and_pushes_nothing(tmp_path, hook, message):
+    seed, session = repos(tmp_path, update_hook=hook)
     before = git(seed, "rev-parse", "origin/pr")
     main_moves_on(seed)
 
     failed = session.update(PullRequest(40, behind=True, branch="pr"))
 
-    assert failed == "update_hook failed (exit 3): no entries file"
+    assert failed == message
     git(seed, "fetch", "-q", "origin")
     assert git(seed, "rev-parse", "origin/pr") == before
 
