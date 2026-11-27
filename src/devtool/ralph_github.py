@@ -4,6 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable
 
+from devtool import main_audit
 from devtool.gates import approved_by
 from devtool.merge_decision import GREEN, RETRO_HEADING
 from devtool.merge_decision import LABEL as MERGE_WHEN_GREEN
@@ -126,6 +127,18 @@ mutation($project: ID!, $content: ID!) {
 }
 """
 
+MAIN_AUDIT_QUERY = """
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    defaultBranchRef { target { ... on Commit { history(first: 20) { nodes {
+      statusCheckRollup { contexts(first: 100) { nodes {
+        ... on CheckRun { name conclusion startedAt detailsUrl }
+      } } }
+    } } } } }
+  }
+}
+"""
+
 OPEN_PRS_QUERY = """
 query($owner: String!, $repo: String!, $number: Int!, $branch: String!) {
   repository(owner: $owner, name: $repo) {
@@ -153,6 +166,7 @@ class GitHubAdapter:
         branch_prefix: str,
         approver: str,
         merge_mode: str,
+        audit_check: str,
     ):
         self.owner, self.repo = repo.split("/")
         self.board_owner = board_owner
@@ -162,6 +176,7 @@ class GitHubAdapter:
         self.branch_prefix = branch_prefix
         self.approver = approver
         self.merge_mode = merge_mode
+        self.audit_check = audit_check
 
     def board_workflows(self) -> dict[str, bool]:
         data = self._graphql(WORKFLOWS_QUERY, owner=self.board_owner, project=self.board_number)
@@ -300,6 +315,24 @@ class GitHubAdapter:
         else:
             args = ["pr", "merge", str(pr), "-R", self._repo(), "--auto", "--squash"]
         self.run(args, None)
+
+    def failed_audit(self) -> str | None:
+        """The newest completed audit run on main's latest commits, by its URL if it failed. A
+        repo without one (its main is protected instead) has nothing to fail."""
+        data = self._graphql(MAIN_AUDIT_QUERY, owner=self.owner, repo=self.repo)
+        for commit in data["repository"]["defaultBranchRef"]["target"]["history"]["nodes"]:
+            rollup = commit["statusCheckRollup"]
+            nodes = rollup["contexts"]["nodes"] if rollup else []
+            done = [n for n in nodes if n.get("name") == self.audit_check and n["conclusion"]]
+            if done:
+                newest = max(done, key=lambda run: run["startedAt"])
+                return None if newest["conclusion"] in GREEN else newest["detailsUrl"]
+        return None
+
+    def policy_violations(self) -> list[int]:
+        args = ["issue", "list", "-R", self._repo(), "--label", main_audit.LABEL]
+        args += ["--state", "open", "--json", "number", "--jq", ".[].number"]
+        return [int(n) for n in self.run(args, None).split()]
 
     def _repo(self) -> str:
         return f"{self.owner}/{self.repo}"

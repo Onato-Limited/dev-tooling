@@ -1,7 +1,7 @@
 from dataclasses import replace
 
 import pytest
-from ralph_fakes import Clock, FakeGitHub, FakeSession
+from ralph_fakes import Clock, FakeDevices, FakeGitHub, FakeSession
 
 from devtool.ralph import (
     ATTENDED,
@@ -17,11 +17,19 @@ from devtool.ralph import (
 )
 
 
-def loop(github, session, notes=None, clock=None, max_iterations=10, improves=False):
+def loop(github, session, notes=None, clock=None, max_iterations=10, improves=False, devices=None):
     notes = [] if notes is None else notes
     clock = clock or Clock()
     return run(
-        2, github, session, notes.append, clock, clock.sleep, max_iterations, improves=improves
+        2,
+        github,
+        session,
+        notes.append,
+        clock,
+        clock.sleep,
+        max_iterations,
+        improves=improves,
+        devices=devices or FakeDevices(),
     )
 
 
@@ -836,3 +844,84 @@ def test_a_timeout_with_only_drafts_left_keeps_its_own_headline():
     stop = loop(github, session, improves=True)
 
     assert stop.startswith("Ralph loop stopped: auto-merge still pending after 60 minutes: PR #50.")
+
+
+def test_an_issue_device_whose_issue_is_closed_is_pruned_after_a_pass():
+    github = FakeGitHub([Issue(7, TODO)])
+    devices = FakeDevices([7])
+
+    loop(github, FakeSession(github, {7: merged_run(40)}), devices=devices)
+
+    assert devices.pruned == [7]
+
+
+def test_an_issue_device_whose_issue_is_still_open_is_left_alone():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, IN_PROGRESS)])
+    devices = FakeDevices([7, 8])
+
+    loop(github, FakeSession(github, {7: merged_run(40)}), devices=devices)
+
+    assert devices.held == [8]
+
+
+def test_a_prune_that_fails_is_listed_in_the_stop_message_and_the_loop_carries_on():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: merged_run(40), 8: merged_run(41)})
+    devices = FakeDevices([7], fails={7: "keeping device-7: leased to 'issue-7 bench'"})
+
+    stop = loop(github, session, devices=devices)
+
+    assert session.worked == [7, 8]
+    assert stop.endswith("Devices left running:\n- #7: keeping device-7: leased to 'issue-7 bench'")
+
+
+def test_a_red_main_audit_stops_the_loop_before_any_session_naming_the_run():
+    github = FakeGitHub([Issue(7, TODO)])
+    github.audit_failed = "https://github.com/owner/repo/actions/runs/9"
+    session = FakeSession(github, {7: merged_run(40)})
+
+    stop = loop(github, session)
+
+    assert session.worked == []
+    assert stop == (
+        "Ralph loop stopped: NEEDS_HUMAN: main's latest audit failed: "
+        "https://github.com/owner/repo/actions/runs/9. The loop starts again once main's newest "
+        "audit run is green (the next merged PR's, or a re-run of this one)."
+    )
+
+
+def test_an_open_policy_violation_issue_stops_the_loop_before_any_session_naming_it():
+    github = FakeGitHub([Issue(7, TODO)])
+    github.violations = [12]
+    session = FakeSession(github, {7: merged_run(40)})
+
+    stop = loop(github, session)
+
+    assert session.worked == []
+    assert stop == (
+        "Ralph loop stopped: NEEDS_HUMAN: policy-violation issue #12 is open. "
+        "Close it once it's dealt with."
+    )
+
+
+def test_a_red_audit_and_its_policy_violation_issue_are_named_together():
+    github = FakeGitHub([Issue(7, TODO)])
+    github.audit_failed = "https://github.com/owner/repo/actions/runs/9"
+    github.violations = [12]
+
+    stop = loop(github, FakeSession(github, {}))
+
+    assert stop.endswith(
+        "re-run of this one); policy-violation issue #12 is open. Close it once it's dealt with."
+    )
+
+
+def test_a_device_pruned_on_a_later_pass_is_not_listed_as_left_running():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: merged_run(40), 8: merged_run(41)})
+    devices = FakeDevices([7])
+    devices.fails_once = {7: "keeping device-7: leased to 'issue-7 bench'"}
+
+    stop = loop(github, session, devices=devices)
+
+    assert (devices.pruned, "Devices left running" in stop) == ([7], False)

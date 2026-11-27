@@ -33,6 +33,7 @@ def adapter(gh, board_owner="owner", review_check="claude-review", merge_mode="a
         branch_prefix="someone",
         approver="the-owner",
         merge_mode=merge_mode,
+        audit_check="main-audit / audit",
     )
 
 
@@ -580,3 +581,62 @@ def test_a_merge_is_arranged_the_way_the_projects_merge_mode_says(mode, command)
     adapter(gh, merge_mode=mode).arrange_merge(40)
 
     assert gh.calls == [(command, None)]
+
+
+def audit_run(conclusion, started_at="2026-11-27T08:00:00Z", run_id=9, name="main-audit / audit"):
+    url = f"https://github.com/owner/repo/actions/runs/{run_id}"
+    return {**run(name, conclusion, started_at), "detailsUrl": url}
+
+
+def main_history(*commits):
+    nodes = [
+        {"statusCheckRollup": None} if runs is None else runs_commit(*runs)["commit"]
+        for runs in commits
+    ]
+    return {"repository": {"defaultBranchRef": {"target": {"history": {"nodes": nodes}}}}}
+
+
+@pytest.mark.parametrize(
+    ("history", "failed"),
+    [
+        ([[audit_run("FAILURE")]], "https://github.com/owner/repo/actions/runs/9"),
+        ([[audit_run("SUCCESS")]], None),
+        (
+            [[audit_run(None, run_id=10)], [audit_run("FAILURE")]],
+            "https://github.com/owner/repo/actions/runs/9",
+        ),
+        ([[run("lint", "FAILURE", "2026-11-27T08:00:00Z")], [audit_run("SUCCESS")]], None),
+        (
+            [[audit_run("FAILURE", run_id=8), audit_run("SUCCESS", "2026-11-27T09:00:00Z")]],
+            None,
+        ),
+        ([[run("lint", "SUCCESS", "2026-11-27T08:00:00Z")]], None),
+        ([None, [audit_run("FAILURE")]], "https://github.com/owner/repo/actions/runs/9"),
+    ],
+    ids=["red", "green", "still running", "other checks", "re-run green", "no audit", "no runs"],
+)
+def test_the_latest_completed_audit_run_on_main_names_its_url_when_it_failed(history, failed):
+    gh = FakeGh(main_history(*history))
+
+    assert adapter(gh).failed_audit() == failed
+    assert sent_variables(gh.calls[0]) == ["owner=owner", "repo=repo"]
+
+
+def test_policy_violations_are_the_open_issues_with_the_label():
+    gh = FakeGh("12\n15\n")
+
+    assert adapter(gh).policy_violations() == [12, 15]
+    assert gh.calls[0][0] == [
+        "issue",
+        "list",
+        "-R",
+        "owner/repo",
+        "--label",
+        "policy-violation",
+        "--state",
+        "open",
+        "--json",
+        "number",
+        "--jq",
+        ".[].number",
+    ]
