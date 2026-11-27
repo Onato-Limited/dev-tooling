@@ -325,3 +325,31 @@ def test_closed_issues_left_off_done_are_moved_to_done_and_named_in_the_stop_mes
         "Ralph loop stopped: milestone complete.\n"
         "Moved to Done (closed, but the board had not moved them): #6"
     )
+
+
+def test_at_the_iteration_cap_the_loop_still_waits_for_its_open_prs():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: pending_run(40), 8: merged_run(41)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(7, 40)
+
+    stop = loop(github, session, clock=clock, max_iterations=1)
+
+    assert (session.worked, clock.sleeps) == ([7], [60])
+    assert stop.startswith("Ralph loop stopped: iteration cap (1) reached.\n")
+
+
+def test_an_issue_whose_pr_merges_while_the_board_is_read_is_not_worked_again():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: pending_run(40)})
+    session.while_running[7] = lambda: github.set_status(7, IN_REVIEW)
+
+    def merges_as_it_is_read(issue):
+        github.merge(7, 40)
+        return False
+
+    github.has_open_pr = merges_as_it_is_read
+
+    loop(github, session)
+
+    assert session.worked == [7]

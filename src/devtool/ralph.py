@@ -173,10 +173,9 @@ class _Loop:
     max_iterations: int
     iterations: int = 0
     opened: list[int] = field(default_factory=list)
-    pending: list[int] = field(default_factory=list)
+    pending: dict[int, int] = field(default_factory=dict)  # this run's open PR → its issue
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
-    worktrees: dict[int, int] = field(default_factory=dict)  # a pending PR → its issue
     left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
     waiting_since: float | None = None
 
@@ -209,11 +208,10 @@ class _Loop:
         return None
 
     def refresh_pending(self) -> None:
-        prs = [self.github.pull_request(n) for n in self.pending]
-        self.pending = [pr.number for pr in prs if not pr.merged]
-        for pr in prs:
-            if pr.merged and pr.number in self.worktrees:
-                self.remove_worktree(self.worktrees.pop(pr.number))
+        for number, issue in list(self.pending.items()):
+            if self.github.pull_request(number).merged:
+                del self.pending[number]
+                self.remove_worktree(issue)
 
     def remove_worktree(self, issue: int) -> None:
         if failed := self.session.remove(issue):
@@ -250,6 +248,7 @@ class _Loop:
             and issue.status == IN_REVIEW
             and not issue.open_blockers
             and issue.number not in self.stuck
+            and issue.number not in self.pending.values()
             and not self.github.has_open_pr(issue.number)
         )
 
@@ -285,8 +284,7 @@ class _Loop:
         elif pr.merged:  # without a PR, stuck_reason gave a reason
             self.remove_worktree(issue.number)
         else:
-            self.pending.append(pr.number)
-            self.worktrees[pr.number] = issue.number
+            self.pending[pr.number] = issue.number
 
     def stop_message(self, headline: str | None) -> str:
         still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
