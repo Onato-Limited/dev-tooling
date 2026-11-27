@@ -1,7 +1,7 @@
 """Ralph loop: works through a milestone's issues, one fresh session per issue."""
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 TODO, IN_PROGRESS, IN_REVIEW, DONE = "Todo", "In progress", "In review", "Done"
@@ -9,6 +9,7 @@ TODO, IN_PROGRESS, IN_REVIEW, DONE = "Todo", "In progress", "In review", "Done"
 ATTENDED = "Attended"
 STUCK_AFTER = 3
 POLL_SECONDS = 60
+MERGE_TIMEOUT = 3600
 # The board only stays true while these GitHub Projects built-in workflows move the cards.
 REQUIRED_WORKFLOWS = (
     "Item closed",
@@ -172,8 +173,11 @@ class _Loop:
     max_iterations: int
     iterations: int = 0
     opened: list[int] = field(default_factory=list)
+    pending: dict[int, int] = field(default_factory=dict)  # this run's open PR → its issue
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
+    left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
+    waiting_since: float | None = None
 
     def run(self) -> str:
         if off := workflows_off(self.github):
@@ -184,14 +188,17 @@ class _Loop:
         while True:
             issues = self.github.milestone_issues(self.milestone)
             self.move_closed_to_done(issues)
+            issues = self.release_in_review(issues)
             if (stop := self.step(next_issue(issues))) is not None:
                 return self.stop_message(stop.headline)
 
     def step(self, issue: Issue | None) -> Stop | None:
+        self.refresh_pending()
         if issue is None:
-            return Stop()
+            return self.wait_for_merges(Stop())
         if halt := self.halt():
-            return Stop(halt)
+            # No more sessions, but the open PRs still need merging before the loop stops.
+            return self.wait_for_merges(Stop(halt))
         self.work(issue)
         return None
 
@@ -200,12 +207,65 @@ class _Loop:
             return f"iteration cap ({self.max_iterations}) reached"
         return None
 
+    def refresh_pending(self) -> None:
+        for number, issue in list(self.pending.items()):
+            if self.github.pull_request(number).merged:
+                del self.pending[number]
+                self.remove_worktree(issue)
+
+    def remove_worktree(self, issue: int) -> None:
+        if failed := self.session.remove(issue):
+            self.left_in_place[issue] = failed
+
     def move_closed_to_done(self, issues: list[Issue]) -> None:
         for closed in [i for i in issues if not i.is_open and i.status != DONE]:
             self.github.set_status(closed.number, DONE)
             self.fixed.append(closed.number)
 
+    def release_in_review(self, issues: list[Issue]) -> list[Issue]:
+        """Moves back to Todo each In-review issue nothing holds; the ones stuck this run stay."""
+        released = []
+        for issue in issues:
+            if self.nothing_holds(issue) and self.cleared(issue.number):
+                self.github.set_status(issue.number, TODO)
+                self.github.comment(
+                    issue.number, "Moved back to Todo by the Ralph loop: nothing holds it any more."
+                )
+                issue = replace(issue, status=TODO)
+            released.append(issue)
+        return released
+
+    def cleared(self, issue: int) -> bool:
+        """Whether the issue's leftover worktree and branch are gone, so a session can start."""
+        if failed := self.session.remove(issue):
+            self.left_in_place[issue] = failed
+            return False
+        return True
+
+    def nothing_holds(self, issue: Issue) -> bool:
+        return (
+            issue.is_open
+            and issue.status == IN_REVIEW
+            and not issue.open_blockers
+            and issue.number not in self.stuck
+            and issue.number not in self.pending.values()
+            and not self.github.has_open_pr(issue.number)
+        )
+
+    def wait_for_merges(self, stop: Stop) -> Stop | None:
+        """`stop` once this run's PRs have merged; until then wait, as one may unblock an issue."""
+        if not self.pending:
+            return stop
+        if self.waiting_since is None:
+            self.waiting_since = self.clock()
+        if self.clock() - self.waiting_since >= MERGE_TIMEOUT:
+            prs = ", ".join(f"PR #{n}" for n in self.pending)
+            return Stop(f"auto-merge still pending after {MERGE_TIMEOUT // 60} minutes: {prs}")
+        self.sleep(POLL_SECONDS)
+        return None
+
     def work(self, issue: Issue) -> None:
+        self.waiting_since = None
         self.iterations += 1
         self.github.set_status(issue.number, IN_PROGRESS)
         outcome = self.session.work(issue, lambda: None)
@@ -221,6 +281,10 @@ class _Loop:
             self.notify(
                 f"Ralph loop: #{issue.number} needs you (moved to In review): {reason}.\n{url}"
             )
+        elif pr.merged:  # without a PR, stuck_reason gave a reason
+            self.remove_worktree(issue.number)
+        else:
+            self.pending[pr.number] = issue.number
 
     def stop_message(self, headline: str | None) -> str:
         still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
@@ -237,4 +301,9 @@ class _Loop:
         if self.fixed:
             moved = ", ".join(f"#{n}" for n in self.fixed)
             lines.append(f"Moved to Done (closed, but the board had not moved them): {moved}")
+        if self.left_in_place:
+            lines += [
+                "Worktrees left in place:",
+                *(f"- #{n}: {r}" for n, r in self.left_in_place.items()),
+            ]
         return "\n".join(lines)

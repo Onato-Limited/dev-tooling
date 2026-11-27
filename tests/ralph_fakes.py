@@ -15,6 +15,7 @@ class FakeGitHub:
         self.comments = []
         self.workflows = {name: True for name in REQUIRED_WORKFLOWS}
         self.prs = {}
+        self.open_prs = set()  # issues an open PR closes or works on
 
     def board_workflows(self):
         return self.workflows
@@ -31,6 +32,9 @@ class FakeGitHub:
 
     def pull_request(self, number):
         return self.prs[number]
+
+    def has_open_pr(self, issue):
+        return issue in self.open_prs
 
     def set_status(self, issue, status):
         self.moves.append((issue, status))
@@ -53,10 +57,18 @@ class FakeSession:
         self.runs = runs
         self.worked = []
         self.status_at_start = []
+        self.removed = []
+        self.removal_fails = {}  # issue → what failed
+        self.while_running = {}  # issue → what happens on GitHub while its session runs
+
+    def remove(self, issue):
+        self.removed.append(issue)
+        return self.removal_fails.get(issue)
 
     def work(self, issue, while_running):
         self.worked.append(issue.number)
         self.status_at_start.append(self.github.issues[issue.number].status)
+        self.while_running.get(issue.number, lambda: None)()
         while_running()
         outcome, pr, pending = self.runs[issue.number]
         if pr is not None:
