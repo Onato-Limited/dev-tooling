@@ -10,7 +10,7 @@ from typing import TextIO
 
 from devtool.merge_decision import LABEL, PullRequest, UpdateBranch, Wait, merge_decision
 from devtool.required_checks import parse_required
-from devtool.review_threads import Query, QueryError, gh_graphql, threads
+from devtool.review_threads import Query, QueryError, blocking, gh_graphql, threads
 
 REFUSED_FIX = (
     "  The app's token needs read and write access to Contents and Pull requests here. A push "
@@ -104,9 +104,7 @@ def snapshot(repo: str, node: dict, query: Query, rest: Rest) -> PullRequest:
         mergeable=node["mergeable"],
         behind=compare["behind_by"] > 0,
         checks=checks(repo, node, rest),
-        unresolved_threads=sum(
-            not thread["isResolved"] for thread in threads(repo, node["number"], query)
-        ),
+        unresolved_threads=sum(blocking(thread) for thread in threads(repo, node["number"], query)),
         comments=[comment["body"] for comment in node["comments"]["nodes"]],
     )
 

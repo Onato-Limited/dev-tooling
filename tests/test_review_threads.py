@@ -7,18 +7,21 @@ import pytest
 from devtool.review_threads import QueryError, gh_graphql, main
 
 FIX = (
-    "  Every review thread must be resolved before the PR merges. Fix the code or reply, resolve "
-    "the thread, then re-run this job: resolving a thread starts no run of its own.\n"
+    "  Resolve each hard finding and each person's thread before the PR merges. A judgement "
+    "finding from the reviewer needs a reply saying why it was taken or left, and can stay open. "
+    "Resolving a thread starts no run, so re-run this job after resolving one.\n"
 )
 
 
-def thread(path, line, author, body, resolved=False, outdated=False, url="https://x/1"):
+def thread(path, line, author, body, resolved=False, outdated=False, url="https://x/1", replies=()):
+    first = {"author": {"login": author}, "body": body, "url": url}
+    others = [{"author": {"login": who}, "body": text, "url": url} for who, text in replies]
     return {
         "isResolved": resolved,
         "isOutdated": outdated,
         "path": path,
         "line": line,
-        "comments": {"nodes": [{"author": {"login": author}, "body": body, "url": url}]},
+        "comments": {"nodes": [first, *others]},
     }
 
 
@@ -62,11 +65,53 @@ def test_a_review_with_an_unresolved_thread_fails_listing_each_one_and_the_fix(c
 
     assert code == 1
     assert capsys.readouterr().out == (
-        "Review threads: 2 unresolved on PR #12.\n"
+        "Review threads: 2 blocking on PR #12.\n"
         "  a.swift:4  claude: [Standards] hard: C3  https://x/4\n"
         "  c.swift:2  onato: Why not `async let`?  https://x/2\n" + FIX
     )
     assert query.calls == [{"owner": "o", "name": "r", "number": 12, "after": None}]
+
+
+def test_a_reviewer_judgement_thread_blocks_until_someone_replies_with_why(capsys):
+    judgement = "[Spec] judgement: maybe guard the branch"
+    query = pages([thread("w.yml", 12, "claude", judgement, url="https://x/12")])
+
+    code = run(query)
+
+    assert code == 1
+    assert capsys.readouterr().out == (
+        "Review threads: 1 blocking on PR #12.\n"
+        "  w.yml:12  claude: [Spec] judgement: maybe guard the branch  https://x/12\n" + FIX
+    )
+
+
+def test_an_answered_reviewer_judgement_thread_is_left_open_without_blocking(capsys):
+    judgement = "[Standards] judgement — a smell"
+    answered = thread(
+        "w.yml", 3, "claude", judgement, url="https://x/3", replies=[("onato", "Leaving it: …")]
+    )
+
+    code = run(pages([answered]))
+
+    assert code == 0
+    assert capsys.readouterr().out == (
+        "Review threads: none blocking on PR #12. Judgement findings answered and left open:\n"
+        "  w.yml:3  claude: [Standards] judgement — a smell  https://x/3\n"
+    )
+
+
+def test_a_reply_by_the_reviewer_itself_does_not_answer_a_judgement(capsys):
+    judgement = "[Spec] judgement: maybe"
+    query = pages([thread("w.yml", 5, "claude", judgement, replies=[("claude", "Still?")])])
+
+    assert run(query) == 1
+
+
+def test_a_persons_thread_labelled_like_a_judgement_blocks_until_resolved(capsys):
+    labelled = "[Spec] judgement: please rename"
+    query = pages([thread("w.yml", 5, "onato", labelled, replies=[("someone", "Leaving it")])])
+
+    assert run(query) == 1
 
 
 def test_resolved_threads_or_none_at_all_pass(capsys):
@@ -85,7 +130,7 @@ def test_an_outdated_unresolved_thread_still_fails(capsys):
 
     assert code == 1
     assert capsys.readouterr().out == (
-        "Review threads: 1 unresolved on PR #12.\n"
+        "Review threads: 1 blocking on PR #12.\n"
         f"  a.swift (outdated)  claude: {'x' * 79}…  https://x/7\n" + FIX
     )
 

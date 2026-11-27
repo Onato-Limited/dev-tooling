@@ -54,6 +54,19 @@ def test_the_prompt_names_the_pr_and_the_standards_copied_from_the_base_branch(r
     assert (root / ".review-rules/CODING_STANDARDS.md").read_text() == "Rule 1: no globals.\n"
 
 
+def test_the_prompt_asks_for_the_label_the_threads_check_reads(repo, capsys):
+    repo({"CODING_STANDARDS.md": "Rule 1.\n"})
+
+    run()
+
+    # review-threads tells a judgement from a hard finding by this label on the first line.
+    out = " ".join(capsys.readouterr().out.split())
+    assert (
+        "Start the first line of every inline comment with `[Standards]` or `[Spec]`, then "
+        "`hard:` or `judgement:`" in out
+    )
+
+
 def test_the_other_rule_files_are_copied_and_listed_only_when_the_base_branch_has_them(
     repo, capsys
 ):

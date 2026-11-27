@@ -1,7 +1,8 @@
-"""Fail while a PR has an unresolved review thread, listing each one."""
+"""Fail while a PR has a review thread that blocks it, listing each one."""
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -18,7 +19,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
           isOutdated
           path
           line
-          comments(first: 1) { nodes { author { login } body url } }
+          comments(first: 100) { nodes { author { login } body url } }
         }
       }
     }
@@ -27,6 +28,14 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
 """
 
 Query = Callable[[str, dict], dict]
+
+REVIEWER = "claude"
+JUDGEMENT = re.compile(r"\[[^\]]+\]\s+judgement\b", re.IGNORECASE)
+FIX = (
+    "  Resolve each hard finding and each person's thread before the PR merges. A judgement "
+    "finding from the reviewer needs a reply saying why it was taken or left, and can stay open. "
+    "Resolving a thread starts no run, so re-run this job after resolving one."
+)
 
 
 class QueryError(Exception):
@@ -59,6 +68,26 @@ def threads(repo: str, pr: int, query: Query) -> list[dict]:
         after = page["pageInfo"]["endCursor"]
 
 
+def login(comment: dict) -> str:
+    # A deleted account's comments have no author; GitHub shows them as "ghost".
+    return (comment["author"] or {"login": "ghost"})["login"]
+
+
+def answered_judgement(thread: dict) -> bool:
+    """A judgement finding from the reviewer that someone else has replied to."""
+    first, *replies = thread["comments"]["nodes"]
+    return (
+        login(first) == REVIEWER
+        and JUDGEMENT.match(first["body"]) is not None
+        and any(login(reply) != REVIEWER for reply in replies)
+    )
+
+
+def blocking(thread: dict) -> bool:
+    """Whether the thread holds up the merge: unresolved, and not an answered judgement."""
+    return not thread["isResolved"] and not answered_judgement(thread)
+
+
 def describe(thread: dict) -> str:
     where = f"{thread['path']}:{thread['line']}" if thread["line"] else f"{thread['path']}"
     if thread["isOutdated"]:
@@ -67,9 +96,7 @@ def describe(thread: dict) -> str:
     line = (first["body"].splitlines() or [""])[0]
     if len(line) > 80:
         line = line[:79] + "…"
-    # A deleted account's comments have no author; GitHub shows them as "ghost".
-    author = (first["author"] or {"login": "ghost"})["login"]
-    return f"  {where}  {author}: {line}  {first['url']}"
+    return f"  {where}  {login(first)}: {line}  {first['url']}"
 
 
 def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) -> int:
@@ -87,15 +114,21 @@ def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) 
             "this job."
         )
         return 1
-    unresolved = [t for t in found if not t["isResolved"]]
-    if not unresolved:
+    blocked = [t for t in found if blocking(t)]
+    if blocked:
+        print(f"Review threads: {len(blocked)} blocking on PR #{args.pr}.")
+        for thread in blocked:
+            print(describe(thread))
+        print(FIX)
+        return 1
+    left = [t for t in found if not t["isResolved"]]
+    if not left:
         print(f"Review threads: none unresolved on PR #{args.pr}.")
         return 0
-    print(f"Review threads: {len(unresolved)} unresolved on PR #{args.pr}.")
-    for thread in unresolved:
-        print(describe(thread))
     print(
-        "  Every review thread must be resolved before the PR merges. Fix the code or reply, "
-        "resolve the thread, then re-run this job: resolving a thread starts no run of its own."
+        f"Review threads: none blocking on PR #{args.pr}. "
+        "Judgement findings answered and left open:"
     )
-    return 1
+    for thread in left:
+        print(describe(thread))
+    return 0
