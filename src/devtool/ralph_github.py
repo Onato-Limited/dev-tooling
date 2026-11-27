@@ -4,6 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable
 
+from devtool.merge_decision import RETRO_HEADING
 from devtool.ralph import GitHubError, Issue, PullRequest
 
 Run = Callable[[list[str], str | None], str]
@@ -72,7 +73,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
         nodes {
           commit {
             statusCheckRollup {
-              contexts(first: 50) { nodes { ... on CheckRun { name conclusion } } }
+              contexts(first: 100) { nodes { ... on CheckRun { name conclusion startedAt } } }
             }
           }
         }
@@ -143,7 +144,11 @@ class GitHubAdapter:
             merged=pr["merged"],
             changes_requested=sum(runs.get(review) == FAILURE for runs in commits),
             ci_failure_streak=trailing_failures(ci),
-            has_retro_notes=any("## Retro notes" in c["body"] for c in pr["comments"]["nodes"]),
+            has_retro_notes=any(
+                line.strip() == RETRO_HEADING
+                for comment in pr["comments"]["nodes"]
+                for line in comment["body"].splitlines()
+            ),
             behind=pr["mergeStateStatus"] == "BEHIND",
             branch=pr["headRefName"],
             unresolved_threads=sum(
@@ -162,10 +167,13 @@ class GitHubAdapter:
 
 
 def check_runs(commit: dict) -> dict[str, str]:
-    """Conclusion by check name; a commit pushed with others may have no runs (a null rollup)."""
+    """Each check's newest conclusion; a commit pushed with others may have no runs (a null
+    rollup). GitHub lists a re-run check's runs in no time order, and a queued run has no
+    start yet, which makes it the newest."""
     rollup = commit["statusCheckRollup"]
     nodes = rollup["contexts"]["nodes"] if rollup else []
-    return {run["name"]: run["conclusion"] for run in nodes if "name" in run}
+    runs = sorted((run for run in nodes if "name" in run), key=lambda run: run["startedAt"] or "~")
+    return {run["name"]: run["conclusion"] for run in runs}
 
 
 def all_passed(runs: dict[str, str]) -> bool:

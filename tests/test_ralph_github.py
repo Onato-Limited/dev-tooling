@@ -231,7 +231,15 @@ def commit(**checks):
     """A PR commit and its check runs; no checks means GitHub ran none (a null rollup)."""
     if not checks:
         return {"commit": {"statusCheckRollup": None}}
-    runs = [{"name": name.replace("_", "-"), "conclusion": c} for name, c in checks.items()]
+    runs = [run(name.replace("_", "-"), c, "2026-11-27T08:00:00Z") for name, c in checks.items()]
+    return runs_commit(*runs)
+
+
+def run(name, conclusion, started_at):
+    return {"name": name, "conclusion": conclusion, "startedAt": started_at}
+
+
+def runs_commit(*runs):
     return {"commit": {"statusCheckRollup": {"contexts": {"nodes": [*runs, {}]}}}}
 
 
@@ -348,3 +356,35 @@ def test_the_review_check_is_the_one_the_config_names():
     pr = GitHubAdapter("owner/repo", "owner", 2, "verdict", gh).pull_request(41)
 
     assert (pr.changes_requested, pr.ci_failure_streak) == (2, 1)
+
+
+def test_a_check_run_more_than_once_counts_by_its_newest_run_wherever_github_lists_it():
+    head = runs_commit(
+        run("lint", "FAILURE", "2026-11-27T08:47:00Z"),
+        run("lint", "SUCCESS", "2026-11-27T08:42:00Z"),
+        run("claude-review", "SUCCESS", "2026-11-27T08:42:00Z"),
+    )
+    gh = FakeGh(pr_reply(merge_state="BLOCKED", commits=[head]))
+
+    pr = adapter(gh).pull_request(93)
+
+    assert (pr.ci_failure_streak, pr.blocked_with_checks_passing) == (1, False)
+    assert "startedAt" in sent_query(gh.calls[0])
+
+
+def test_a_queued_run_not_yet_started_is_the_newest():
+    head = runs_commit(
+        run("claude-review", None, None),
+        run("claude-review", "SUCCESS", "2026-11-27T08:42:00Z"),
+        run("lint", "SUCCESS", "2026-11-27T08:42:00Z"),
+    )
+    gh = FakeGh(pr_reply(merge_state="BLOCKED", commits=[head]))
+
+    assert adapter(gh).pull_request(93).blocked_with_checks_passing is False
+
+
+def test_a_comment_that_only_mentions_the_retro_heading_is_not_retro_notes():
+    comments = ["Please add a `## Retro notes` comment.", "## Retro notes later"]
+    gh = FakeGh(pr_reply(comments=comments, commits=[commit()]))
+
+    assert adapter(gh).pull_request(93).has_retro_notes is False
