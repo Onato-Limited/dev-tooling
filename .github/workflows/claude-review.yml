@@ -1,0 +1,134 @@
+name: claude-review
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: Claude model the review runs on, e.g. claude-opus-5-5 (default the action's)
+        type: string
+        default: ""
+      effort:
+        description: Effort the review runs at (low, medium, high, xhigh, max)
+        type: string
+        default: high
+      standards:
+        description: Coding standards file the review judges against, read from the base branch
+        type: string
+        default: CODING_STANDARDS.md
+      spec:
+        description: Spec file, read from the base branch if it is there
+        type: string
+        default: SPEC.md
+      allowed-bots:
+        description: Comma-separated bot logins whose PRs are reviewed too
+        type: string
+        default: ""
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+permissions: {}
+jobs:
+  review:
+    # Never hand the token to a fork's code. A skipped job counts as a passing check, so a fork's
+    # PR needs a person's review instead.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A push and a body edit seconds apart would otherwise race; only the newest review counts.
+    concurrency:
+      group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The CLI and the prompt come from the same commit as this workflow, so a caller pinned at
+      # @v1 never runs a different review than the workflow it called, and a PR in the caller
+      # cannot change its own reviewer.
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Copy the rules from the base branch and build the prompt
+        id: prompt
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR: ${{ github.event.pull_request.number }}
+          STANDARDS: ${{ inputs.standards }}
+          SPEC: ${{ inputs.spec }}
+        run: |
+          uv run --quiet --frozen --no-dev --project .devtool devtool review-prompt \
+            --base "origin/$BASE_REF" --repo "$GITHUB_REPOSITORY" --pr "$PR" \
+            --standards "$STANDARDS" --spec "$SPEC" > "$RUNNER_TEMP/prompt.md"
+          delimiter="PROMPT_$(openssl rand -hex 16)"
+          {
+            echo "prompt<<$delimiter"
+            cat "$RUNNER_TEMP/prompt.md"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+      - name: Review
+        id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: ${{ inputs.allowed-bots }}
+          # A bot that is not a collaborator counts as untrusted and loses the gh tools; the job
+          # already runs only for same-repo PRs, never forks.
+          restrict_untrusted_prs: false
+          allow_fork_prs: "false"
+          prompt: ${{ steps.prompt.outputs.prompt }}
+          claude_args: |
+            --permission-mode default
+            ${{ inputs.model != '' && format('--model {0}', inputs.model) || '' }}
+            --effort ${{ inputs.effort }}
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh issue view:*)"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["APPROVE","REQUEST_CHANGES"]},"summary":{"type":"string"},"comment":{"type":"string","minLength":1}},"required":["verdict","summary","comment"]}'
+      # Posted here rather than by the model: Claude Code refuses a multi-line `gh pr comment
+      # --body` against the allowlist, so a model-posted comment silently never arrives.
+      - name: Post the review comment
+        if: steps.review.outputs.execution_file != ''
+        env:
+          OUTPUT: ${{ steps.review.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          EFFORT: ${{ inputs.effort }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s' "$OUTPUT" > "$RUNNER_TEMP/output.json"
+          uv run --quiet --frozen --no-dev --project .devtool devtool review-comment \
+            --output "$RUNNER_TEMP/output.json" --execution "$EXECUTION_FILE" \
+            --effort "$EFFORT" > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+      # Runs even when the review or the comment failed, so a refused tool or a missing verdict
+      # is explained rather than left as a bare step failure.
+      - name: Fail unless the review approves
+        if: ${{ !cancelled() && steps.prompt.outcome == 'success' }}
+        env:
+          OUTPUT: ${{ steps.review.outputs.structured_output }}
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        # The action can skip itself and still succeed, leaving no run behind.
+        run: |
+          if [ -z "$EXECUTION_FILE" ]; then
+            echo "Review: Claude did not run, so there is no review. The Review step's log says"
+            echo "why. Most often the Claude GitHub App is not installed on this repository, or"
+            echo "the calling workflow differs from the default branch's copy: a PR cannot add or"
+            echo "change its own reviewer. Fix that, then re-run this job."
+            exit 1
+          fi
+          printf '%s' "$OUTPUT" > "$RUNNER_TEMP/output.json"
+          uv run --quiet --frozen --no-dev --project .devtool devtool review-verdict \
+            --output "$RUNNER_TEMP/output.json" --execution "$EXECUTION_FILE"
