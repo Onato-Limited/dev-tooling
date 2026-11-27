@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from ralph_fakes import Clock, FakeGitHub, FakeSession
 
@@ -381,3 +383,212 @@ def test_the_hour_to_merge_starts_again_after_a_session():
 
     assert (session.worked, clock.sleeps) == ([7, 8], [60, 60])
     assert stop == "Ralph loop stopped: milestone complete."
+
+
+def test_pending_prs_left_behind_main_are_brought_up_to_date_while_the_loop_works():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO), Issue(9, TODO)])
+    session = FakeSession(
+        github, {7: pending_run(40), 8: pending_run(41, behind=True), 9: merged_run(42)}
+    )
+    clock = Clock()
+    clock.on_sleep = lambda: [github.merge(7, 40), github.merge(8, 41)]
+
+    loop(github, session, clock=clock)
+
+    assert session.worked == [7, 8, 9]
+    assert github.updates == [41]
+
+
+def test_a_pending_pr_that_falls_behind_while_a_session_runs_is_updated_before_it_ends():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: pending_run(40), 8: merged_run(41)})
+    session.while_running = {8: lambda: github.prs.update({40: PullRequest(40, behind=True)})}
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(7, 40)
+
+    loop(github, session, clock=clock)
+
+    assert (session.updates_at_end[7], session.updates_at_end[8]) == ([], [40])
+
+
+def test_a_github_error_while_a_session_runs_is_listed_in_the_stop_message_and_it_goes_on():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO), Issue(9, TODO)])
+    session = FakeSession(github, {7: pending_run(40), 8: merged_run(41), 9: merged_run(42)})
+
+    session.while_running = {8: lambda: github.pr_fails.append("gh api graphql failed: HTTP 502")}
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(7, 40)
+
+    stop = loop(github, session, clock=clock)
+
+    assert session.worked == [7, 8, 9]
+    assert stop == (
+        "Ralph loop stopped: milestone complete.\n"
+        "GitHub errors while a session ran:\n"
+        "- gh api graphql failed: HTTP 502"
+    )
+
+
+def test_a_pr_that_cannot_be_brought_up_to_date_puts_its_issue_in_review_and_is_not_waited_for():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: pending_run(40, behind=True), 8: merged_run(41)})
+    session.update_fails = {40: "merging main conflicts in b.txt"}
+    clock = Clock()
+    notes = []
+
+    stop = loop(github, session, notes=notes, clock=clock)
+
+    reason = "PR #40 can't be brought up to date with main: merging main conflicts in b.txt"
+    assert (7, IN_REVIEW) in github.moves
+    assert github.comments == [(7, f"Moved to In review by the Ralph loop: {reason}.")]
+    url = "https://github.com/owner/repo/issues/7#issuecomment-1"
+    assert f"Ralph loop: #7 needs you (moved to In review): {reason}.\n{url}" in notes
+    assert f"- #7: {reason}" in stop.splitlines()
+    assert clock.sleeps == []
+
+
+def test_a_pr_with_no_issue_of_its_own_that_cannot_be_updated_is_reported_and_not_waited_for():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[127] = PullRequest(number=127, behind=True)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(127,)), PullRequest(130), False)})
+    session.update_fails = {127: "merging main conflicts in b.txt"}
+    clock = Clock()
+    notes = []
+
+    stop = loop(github, session, notes=notes, clock=clock)
+
+    reason = "PR #127 can't be brought up to date with main: merging main conflicts in b.txt"
+    assert f"Ralph loop: {reason}." in notes
+    assert stop.splitlines()[-2:] == ["Not brought up to date:", f"- {reason}"]
+    assert clock.sleeps == []
+
+
+def held_by_threads(pr, threads):
+    return PullRequest(number=pr, blocked_with_checks_passing=True, unresolved_threads=threads)
+
+
+def test_a_green_pr_held_by_an_unresolved_thread_puts_its_issue_in_review_and_is_not_waited_for():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    session = FakeSession(github, {7: (Outcome(pr=40), held_by_threads(40, 2), True)})
+    session.runs[8] = merged_run(41)
+    clock = Clock()
+
+    stop = loop(github, session, clock=clock)
+
+    reason = "PR #40 is held by 2 unresolved review threads"
+    assert (7, IN_REVIEW) in github.moves
+    assert github.comments == [(7, f"Moved to In review by the Ralph loop: {reason}.")]
+    assert f"- #7: {reason}" in stop.splitlines()
+    assert clock.sleeps == []
+
+
+def test_a_green_pr_with_no_issue_of_its_own_held_by_an_unresolved_thread_is_in_the_stop_message():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[127] = held_by_threads(127, 1)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(127,)), PullRequest(130), False)})
+    clock = Clock()
+
+    stop = loop(github, session, clock=clock)
+
+    reason = "PR #127 is held by 1 unresolved review thread"
+    assert stop.splitlines()[-2:] == ["Held by review threads:", f"- {reason}"]
+    assert clock.sleeps == []
+
+
+def test_other_prs_a_session_opened_are_brought_up_to_date_and_waited_for():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[127] = PullRequest(number=127, behind=True)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(127,)), PullRequest(130), False)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.prs.update({127: PullRequest(number=127, merged=True)})
+
+    loop(github, session, clock=clock)
+
+    assert github.updates == [127]
+    assert clock.sleeps == [60]
+    assert session.removed == [18]
+
+
+def test_the_loop_arranges_the_merge_of_each_pr_it_waits_for():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[126] = PullRequest(number=126, merged=True)
+    github.prs[127] = PullRequest(number=127)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(126, 127)), PullRequest(130), True)})
+    clock = Clock()
+    clock.on_sleep = lambda: [github.merge(18, 130), github.merge(18, 127)]
+
+    loop(github, session, clock=clock)
+
+    assert github.arranged == [127, 130]
+
+
+def test_a_stuck_issues_prs_are_left_to_the_owner_to_merge():
+    github = FakeGitHub([Issue(7, TODO)])
+    github.prs[41] = PullRequest(number=41)
+    stuck = (Outcome(pr=40, needs_human="pick a licence", also=(41,)), PullRequest(40), True)
+    session = FakeSession(github, {7: stuck})
+
+    loop(github, session)
+
+    assert github.arranged == []
+
+
+def test_a_sessions_other_pr_without_retro_notes_is_named_in_the_stop_message():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[127] = PullRequest(number=127, merged=True, has_retro_notes=False)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(127,)), PullRequest(130), False)})
+
+    stop = loop(github, session)
+
+    assert "Missing retro notes: PR #127" in stop.splitlines()
+
+
+def test_a_merged_pr_that_still_reads_as_held_is_simply_merged():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: pending_run(40)})
+    clock = Clock()
+
+    def merged_but_held():
+        github.merge(7, 40)
+        github.prs[40] = replace(held_by_threads(40, 1), merged=True)
+
+    clock.on_sleep = merged_but_held
+
+    stop = loop(github, session, clock=clock)
+
+    assert (stop, github.comments) == ("Ralph loop stopped: milestone complete.", [])
+
+
+@pytest.mark.parametrize(
+    "pr",
+    [
+        PullRequest(number=40, unresolved_threads=1),
+        PullRequest(number=40, blocked_with_checks_passing=True),
+    ],
+    ids=["a thread, but checks still running", "green, but held by something else"],
+)
+def test_a_pr_with_threads_but_not_green_or_green_but_no_threads_is_still_waited_for(pr):
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: (Outcome(pr=40), pr, True)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.merge(7, 40)
+
+    loop(github, session, clock=clock)
+
+    assert (clock.sleeps, github.comments) == ([60], [])
+
+
+def test_a_pr_that_merged_while_it_still_reads_as_behind_is_not_updated():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: pending_run(40)})
+    clock = Clock()
+
+    def merged_but_behind():
+        github.merge(7, 40)
+        github.prs[40] = PullRequest(number=40, merged=True, behind=True)
+
+    clock.on_sleep = merged_but_behind
+
+    stop = loop(github, session, clock=clock)
+
+    assert (github.updates, stop) == ([], "Ralph loop stopped: milestone complete.")

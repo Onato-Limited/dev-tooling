@@ -75,6 +75,7 @@ class GitHub(ReadsBoard, Protocol):
     def comment(self, issue: int, body: str) -> str: ...  # the comment's URL
     def plan_approved(self, parent: int) -> bool: ...  # the owner added plan-approved last
     def undraft(self, issue: int) -> None: ...
+    def arrange_merge(self, pr: int) -> None: ...  # per the project's merge mode
 
 
 class Session(Protocol):
@@ -173,10 +174,14 @@ class _Loop:
     max_iterations: int
     iterations: int = 0
     opened: list[int] = field(default_factory=list)
-    pending: dict[int, int] = field(default_factory=dict)  # this run's open PR → its issue
+    # This run's open PRs → each one's issue, or None for a session's other PRs.
+    pending: dict[int, int | None] = field(default_factory=dict)
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
     left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
+    errors_while_running: list[str] = field(default_factory=list)
+    not_brought_up_to_date: list[str] = field(default_factory=list)  # PRs no issue holds
+    held_by_threads: list[str] = field(default_factory=list)  # PRs no issue holds, too
     waiting_since: float | None = None
 
     def run(self) -> str:
@@ -208,10 +213,54 @@ class _Loop:
         return None
 
     def refresh_pending(self) -> None:
-        for number, issue in list(self.pending.items()):
-            if self.github.pull_request(number).merged:
-                del self.pending[number]
+        prs = [self.github.pull_request(n) for n in self.pending]
+        for pr in prs:
+            if pr.merged and (issue := self.pending.pop(pr.number)) is not None:
                 self.remove_worktree(issue)
+        self.update_behind(prs)
+        self.drop_held(prs)
+
+    def drop_held(self, prs: list[PullRequest]) -> None:
+        """Stop waiting for a green PR an unresolved review thread blocks: it never merges."""
+        for pr in prs:
+            held = pr.blocked_with_checks_passing and pr.unresolved_threads
+            if held and pr.number in self.pending:  # not merged, nor dropped for another reason
+                count = pr.unresolved_threads
+                threads = f"{count} unresolved review thread" + ("" if count == 1 else "s")
+                reason = f"PR #{pr.number} is held by {threads}"
+                self.stop_waiting(pr.number, reason, self.held_by_threads)
+
+    def update_behind(self, prs: list[PullRequest]) -> None:
+        for pr in prs:
+            if not pr.merged and pr.behind and (failed := self.session.update(pr)):
+                reason = f"PR #{pr.number} can't be brought up to date with main: {failed}"
+                self.stop_waiting(pr.number, reason, self.not_brought_up_to_date)
+
+    def stop_waiting(self, pr: int, reason: str, unowned: list[str]) -> None:
+        """Drops a pending PR; its issue goes to In review, or `unowned` lists a PR without one."""
+        issue = self.pending.pop(pr)
+        if issue is None:
+            unowned.append(reason)
+            self.notify(f"Ralph loop: {reason}.")
+            return
+        self.needs_owner(issue, reason)
+
+    def needs_owner(self, issue: int, reason: str) -> None:
+        self.stuck[issue] = reason
+        self.github.set_status(issue, IN_REVIEW)
+        url = self.github.comment(issue, f"Moved to In review by the Ralph loop: {reason}.")
+        self.notify(f"Ralph loop: #{issue} needs you (moved to In review): {reason}.\n{url}")
+
+    def update_behind_pending(self) -> None:
+        """While a session runs: a GitHub error is reported at the end, not raised into it."""
+        try:
+            self.update_behind([self.github.pull_request(n) for n in self.pending])
+        except GitHubError as error:
+            self.errors_while_running.append(str(error))
+
+    def wait_on(self, pr: int, issue: int | None) -> None:
+        self.github.arrange_merge(pr)
+        self.pending[pr] = issue
 
     def remove_worktree(self, issue: int) -> None:
         if failed := self.session.remove(issue):
@@ -268,23 +317,21 @@ class _Loop:
         self.waiting_since = None
         self.iterations += 1
         self.github.set_status(issue.number, IN_PROGRESS)
-        outcome = self.session.work(issue, lambda: None)
+        outcome = self.session.work(issue, self.update_behind_pending)
         pr = self.github.pull_request(outcome.pr) if outcome.pr is not None else None
         if pr is not None:
             self.opened.append(pr.number)
+        self.opened += outcome.also
         if reason := stuck_reason(outcome, pr):
-            self.stuck[issue.number] = reason
-            self.github.set_status(issue.number, IN_REVIEW)
-            url = self.github.comment(
-                issue.number, f"Moved to In review by the Ralph loop: {reason}."
-            )
-            self.notify(
-                f"Ralph loop: #{issue.number} needs you (moved to In review): {reason}.\n{url}"
-            )
-        elif pr.merged:  # without a PR, stuck_reason gave a reason
+            self.needs_owner(issue.number, reason)  # its PRs, and any others, are the owner's
+            return
+        for other in outcome.also:
+            if not self.github.pull_request(other).merged:
+                self.wait_on(other, None)
+        if pr.merged:  # without a PR, stuck_reason gave a reason
             self.remove_worktree(issue.number)
         else:
-            self.pending[pr.number] = issue.number
+            self.wait_on(pr.number, issue.number)
 
     def stop_message(self, headline: str | None) -> str:
         still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
@@ -306,4 +353,13 @@ class _Loop:
                 "Worktrees left in place:",
                 *(f"- #{n}: {r}" for n, r in self.left_in_place.items()),
             ]
+        if self.errors_while_running:
+            lines += [
+                "GitHub errors while a session ran:",
+                *(f"- {e}" for e in self.errors_while_running),
+            ]
+        if self.not_brought_up_to_date:
+            lines += ["Not brought up to date:", *(f"- {r}" for r in self.not_brought_up_to_date)]
+        if self.held_by_threads:
+            lines += ["Held by review threads:", *(f"- {r}" for r in self.held_by_threads)]
         return "\n".join(lines)
