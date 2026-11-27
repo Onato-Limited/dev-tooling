@@ -79,7 +79,7 @@ def audit(push: Push, required: list[str]) -> list[Violation]:
         violations.append(Violation(UNLISTED, push.after, found, UNLISTED_FIX))
     for commit in push.commits:
         if commit.pr is None:
-            found = f"{commit.sha} was pushed to main without a PR"
+            found = "This commit was pushed to main without a PR"
             violations.append(Violation(NO_PR, commit.sha, found, NO_PR_FIX))
             continue
         if commit.parents > 1:

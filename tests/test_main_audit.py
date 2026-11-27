@@ -37,7 +37,7 @@ def test_a_commit_with_no_merged_pr_is_a_violation():
         Violation(
             rule="every commit on main comes from a merged PR",
             sha="ccc3333",
-            found="ccc3333 was pushed to main without a PR",
+            found="This commit was pushed to main without a PR",
             fix="Revert it on main and open the change as a PR.",
         )
     ]
