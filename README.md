@@ -56,6 +56,47 @@ A multi-line input is a YAML block scalar:
         /config/production.yml
 ```
 
+## Claude review
+
+Reviews a PR with Claude Code against your repo's rules, leaves inline comments and a summary
+comment, and fails unless Claude approves. Shown on the PR as `<your job> / review`.
+
+```yaml
+on:
+  pull_request:
+    # edited: the review reads the PR body, so a body written after the push needs a fresh review.
+    types: [opened, synchronize, reopened, edited]
+jobs:
+  claude:
+    uses: Onato-Limited/dev-tooling/.github/workflows/claude-review.yml@v1
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      effort: high
+```
+
+The rules come from the PR's **base branch**, so a PR can't loosen the rules it is reviewed
+against: `standards` (required), `CLAUDE.md`, `spec` and `REVIEW.md` when present, and any file
+`REVIEW.md` includes with a line that is only `@<path>`. The review makes a Standards pass over
+the diff and PR body, and a Spec pass against the issue the PR closes and the spec. If your rules
+define a format for findings, the review uses it.
+
+| Input | Default | |
+|---|---|---|
+| `model` | the action's | Model the review runs on; the summary comment names the model that ran |
+| `effort` | `high` | `low`, `medium`, `high`, `xhigh` or `max` |
+| `standards` | `CODING_STANDARDS.md` | The check fails, naming the file, when the base branch has none |
+| `spec` | `SPEC.md` | Skipped when the base branch has none |
+| `allowed-bots` | none | Comma-separated bot logins whose PRs are reviewed too |
+
+Fork PRs are skipped, since they must never get the token, and a skipped job counts as passing,
+so give them a person's review instead.
+
 ## Develop
 
 ```sh
