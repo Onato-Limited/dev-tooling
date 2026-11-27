@@ -9,7 +9,8 @@ on:
 permissions: {}
 jobs:
   audit:
-    if: github.event_name == 'push'
+    # Only the default branch is audited: a feature branch's commits have no merged PR yet.
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     # No concurrency group: GitHub keeps only one pending run per group, so pushes close together
     # would go unaudited. Two failing at once can each open an issue; a duplicate is the lesser harm.
