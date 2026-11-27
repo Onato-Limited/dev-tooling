@@ -1,2 +1,2 @@
 # Paths the PR size check ignores (gitignore-style). Only generated or vendored files belong here.
-uv.lock
+# Lock files are not listed: a dependency change is part of what a reviewer has to read.
