@@ -9,8 +9,9 @@ on:
 permissions: {}
 jobs:
   audit:
-    # Only the default branch is audited: a feature branch's commits have no merged PR yet.
-    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    # Only the default branch is audited (branches, not a tag with its name): a feature branch's
+    # commits have no merged PR yet.
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     # No concurrency group: GitHub keeps only one pending run per group, so pushes close together
     # would go unaudited. Two failing at once can each open an issue; a duplicate is the lesser harm.
@@ -51,8 +52,8 @@ jobs:
           if ! gh api -H "Accept: application/vnd.github.raw" \
             "repos/$GITHUB_REPOSITORY/contents/.github/required-checks?ref=$BEFORE" \
             > "$RUNNER_TEMP/required-checks"; then
-            echo "main-audit: can't read .github/required-checks as main was at $BEFORE."
-            echo "  Add the file to main, listing the checks a PR must pass, one per line."
+            echo "main-audit: can't read .github/required-checks as main was at $BEFORE (gh's error is above)."
+            echo "  If the file is missing, add it to main, listing the checks a PR must pass, one per line."
             exit 1
           fi
       - name: Audit the push

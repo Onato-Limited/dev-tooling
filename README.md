@@ -179,8 +179,9 @@ log says which PR and why.
 
 ## Main audit
 
-For repos where `main` can't be protected. On every push to `main` it checks each pushed commit
-against the policy:
+For repos where `main` can't be protected. On every push to the default branch (`main` below) it
+checks each pushed commit against the policy. Pushes to any other branch or tag are skipped, so
+the default branch is the one to name in `branches:`. The checks:
 - the push wasn't forced;
 - the commit came from a merged PR;
 - that PR was squash-merged (no merge commit, no rebase);
