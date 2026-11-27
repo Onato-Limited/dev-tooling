@@ -8,6 +8,7 @@ from devtool import (
     protected_paths,
     required_checks,
     review_comment,
+    review_prompt,
     review_verdict,
     secrets_report,
 )
@@ -20,6 +21,7 @@ COMMANDS = {
     "secrets-report": secrets_report,
     "review-verdict": review_verdict,
     "review-comment": review_comment,
+    "review-prompt": review_prompt,
 }
 
 
