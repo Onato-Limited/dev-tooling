@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from devtool.ralph import POLL_SECONDS, Issue, Outcome
+from devtool.ralph import POLL_SECONDS, Improvement, Issue, Outcome, PullRequest
 from devtool.ralph_token import TokenError, TokenFile
 
 STREAM = ["--permission-mode", "auto", "--output-format", "stream-json", "--verbose"]
@@ -54,10 +54,10 @@ class Bot:
     def login(self) -> str:
         return f"{self.app_slug}[bot]"
 
-    def git_env(self) -> dict[str, str]:
-        """Commits as the bot, pushed over HTTPS with the token file's token: an SSH remote would
-        push with the owner's key, and the helper list is emptied first
-        so the keychain's owner credentials aren't offered."""
+    def git_env(self, helper: str = "ralph") -> dict[str, str]:
+        """Commits as the bot, pushed over HTTPS with the bot's token through `helper` (a session's
+        `git-credential-ralph` by default): an SSH remote would push with the owner's key, and the
+        helper list is emptied first so the keychain's owner credentials aren't offered."""
         email = f"{self.user_id}+{self.login}@users.noreply.github.com"
         return {
             "GIT_AUTHOR_NAME": self.login,
@@ -70,7 +70,7 @@ class Bot:
             "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
             "GIT_CONFIG_VALUE_1": "",
             "GIT_CONFIG_KEY_2": "credential.https://github.com.helper",
-            "GIT_CONFIG_VALUE_2": "ralph",  # git-credential-ralph
+            "GIT_CONFIG_VALUE_2": helper,
         }
 
 
@@ -81,6 +81,7 @@ class ClaudeSession:
     bot: Bot
     tokens: SessionTokens
     session_path: str | None
+    update_hook: str | None
     run: Callable[..., subprocess.CompletedProcess]
     start: Callable[..., subprocess.Popen]
     environ: dict[str, str]
@@ -148,6 +149,81 @@ class ClaudeSession:
             " else, read the latest comments on the issue and on the PR: the owner's ruling is"
             " there.\n"
         ), None
+
+    def remove(self, issue: int) -> str | None:
+        """What failed, or None once the issue's worktree and branch are gone or never existed."""
+        worktree, branch = self._worktree(issue), self._branch(issue)
+        if worktree.exists() and (failed := self._git(["worktree", "remove", str(worktree)])):
+            return failed
+        if self._git(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]):
+            return None
+        return self._git(["branch", "-D", branch])  # -D: a squash merge leaves it unmerged
+
+    def update(self, pr: PullRequest) -> str | None:
+        """Merges `main` into the PR's branch and pushes it as the bot; what failed, if it didn't.
+        Not GitHub's update-branch, so that `update_hook` can resolve conflicts or add commits."""
+        try:  # minted first: a failure must leave no worktree, nor reach a running session
+            env = self.tokens.session_env(
+                {**own_environ(self.environ), **self.bot.git_env("!gh auth git-credential")}
+            )
+        except TokenError as error:
+            return f"the bot's token: {error}"
+        worktree = self.repo.parent / f"{self.repo.name}-update-{pr.number}"
+        if failed := self._add_worktree(worktree, ["--detach", f"origin/{pr.branch}"]):
+            return failed
+        failed = self._merge_main(worktree, env) or self._git_in(
+            worktree, env, ["push", "origin", f"HEAD:refs/heads/{pr.branch}"]
+        )
+        # --force: after a failed merge the worktree holds its conflicts, which nothing needs.
+        left = self._git(["worktree", "remove", "--force", str(worktree)])
+        return failed or left
+
+    def _merge_main(self, worktree: Path, env: dict[str, str]) -> str | None:
+        merge_failed = self._git_in(worktree, env, ["merge", "--no-edit", "origin/main"])
+        if self.update_hook:
+            done = self._run_in(worktree, env, ["/bin/sh", "-c", self.update_hook])
+            if done.returncode != 0:
+                return f"update_hook failed (exit {done.returncode}): {done.stderr.strip()}"
+        conflicted = self._run_in(worktree, env, ["git", "diff", "--name-only", "--diff-filter=U"])
+        conflicted = conflicted.stdout.split()
+        if conflicted:
+            return f"merging main conflicts in {', '.join(conflicted)}"
+        if self._git_in(worktree, env, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]) is None:
+            return self._git_in(worktree, env, ["commit", "--no-edit"])  # the hook resolved it
+        if self._git_in(worktree, env, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]):
+            return merge_failed or "main is not merged in after update_hook"
+        return None
+
+    def improve(self, prs: tuple[int, ...], while_running: Callable[[], None]) -> Improvement:
+        worktree = self.repo.parent / f"{self.repo.name}-improve-{self.now():%Y%m%d-%H%M%S}"
+        if failed := self._add_worktree(worktree, ["--detach", "origin/main"]):
+            return Improvement(needs_human=failed)
+        named = "PRs " + ", ".join(f"#{n}" for n in prs)
+        prompt = (self.repo / ".ralph" / "IMPROVE.md").read_text().replace("{prs}", named)
+        text, log = self._claude(prompt, worktree, "improve", while_running)
+        left = self._git(["worktree", "remove", str(worktree)])
+        if text is None:
+            return Improvement(
+                needs_human=f"the session ended without a result; see {log}", left_in_place=left
+            )
+        return Improvement(
+            prs=numbers("PR", text), proposals=numbers("PROPOSED", text), left_in_place=left
+        )
+
+    def _add_worktree(self, worktree: Path, start: list[str]) -> str | None:
+        return self._git(["fetch", "origin"]) or self._git(
+            ["worktree", "add", str(worktree), *start]
+        )
+
+    def _git_in(self, worktree: Path, env: dict[str, str], step: list[str]) -> str | None:
+        if (done := self._run_in(worktree, env, ["git", *step])).returncode != 0:
+            return f"git {' '.join(step[:2])} failed: {done.stderr.strip()}"
+        return None
+
+    def _run_in(
+        self, worktree: Path, env: dict[str, str], args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(args, cwd=worktree, env=env, capture_output=True, text=True)
 
     def _branch(self, issue: int) -> str:
         return f"{self.branch_prefix}/{issue}-ralph"
