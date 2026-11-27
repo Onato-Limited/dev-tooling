@@ -2,7 +2,15 @@ import argparse
 import sys
 from importlib.metadata import version
 
-from devtool import pr_shape, pr_size, protected_paths, required_checks, secrets_report
+from devtool import (
+    pr_shape,
+    pr_size,
+    protected_paths,
+    required_checks,
+    review_comment,
+    review_verdict,
+    secrets_report,
+)
 
 COMMANDS = {
     "pr-size": pr_size,
@@ -10,6 +18,8 @@ COMMANDS = {
     "protected-paths": protected_paths,
     "required-checks": required_checks,
     "secrets-report": secrets_report,
+    "review-verdict": review_verdict,
+    "review-comment": review_comment,
 }
 
 
