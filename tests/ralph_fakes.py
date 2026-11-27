@@ -1,4 +1,4 @@
-"""A fake GitHub for the Ralph loop's tests, held in memory."""
+"""Fakes for the Ralph loop's tests: GitHub, a session and a clock, held in memory."""
 
 from dataclasses import replace
 
@@ -14,6 +14,7 @@ class FakeGitHub:
         self.moves = []
         self.comments = []
         self.workflows = {name: True for name in REQUIRED_WORKFLOWS}
+        self.prs = {}
 
     def board_workflows(self):
         return self.workflows
@@ -27,3 +28,54 @@ class FakeGitHub:
             )
             for n, issue in sorted(self.issues.items())
         ]
+
+    def pull_request(self, number):
+        return self.prs[number]
+
+    def set_status(self, issue, status):
+        self.moves.append((issue, status))
+        self.issues[issue] = replace(self.issues[issue], status=status)
+
+    def comment(self, issue, body):
+        self.comments.append((issue, body))
+        return f"https://github.com/owner/repo/issues/{issue}#issuecomment-1"
+
+    def merge(self, issue, pr):
+        self.issues[issue] = replace(self.issues[issue], is_open=False, status="Done")
+        self.prs[pr] = replace(self.prs[pr], merged=True)
+
+
+class FakeSession:
+    """Each issue's session opens `pr` and, unless `pending`, has it merged at once."""
+
+    def __init__(self, github, runs):
+        self.github = github
+        self.runs = runs
+        self.worked = []
+        self.status_at_start = []
+
+    def work(self, issue, while_running):
+        self.worked.append(issue.number)
+        self.status_at_start.append(self.github.issues[issue.number].status)
+        while_running()
+        outcome, pr, pending = self.runs[issue.number]
+        if pr is not None:
+            self.github.prs[pr.number] = pr
+            if not pending:
+                self.github.merge(issue.number, pr.number)
+        return outcome
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+        self.on_sleep = lambda: None
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+        self.on_sleep()

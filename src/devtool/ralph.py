@@ -1,7 +1,7 @@
 """Ralph loop: works through a milestone's issues, one fresh session per issue."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 TODO, IN_PROGRESS, IN_REVIEW, DONE = "Todo", "In progress", "In review", "Done"
@@ -138,3 +138,103 @@ def dry_run(milestone: int, github: ReadsBoard) -> str:
     else:
         lines.append(f"Next: #{issue.number}")
     return "\n".join(lines)
+
+
+def run(
+    milestone: int,
+    github: GitHub,
+    session: Session,
+    notify: Callable[[str], None],
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    max_iterations: int,
+) -> str:
+    message = _Loop(milestone, github, session, notify, clock, sleep, max_iterations).run()
+    notify(message)
+    return message
+
+
+@dataclass(frozen=True)
+class Stop:
+    """Why the loop stops; no headline means it ran out of issues it can take."""
+
+    headline: str | None = None
+
+
+@dataclass
+class _Loop:
+    milestone: int
+    github: GitHub
+    session: Session
+    notify: Callable[[str], None]
+    clock: Callable[[], float]
+    sleep: Callable[[float], None]
+    max_iterations: int
+    iterations: int = 0
+    opened: list[int] = field(default_factory=list)
+    stuck: dict[int, str] = field(default_factory=dict)
+    fixed: list[int] = field(default_factory=list)
+
+    def run(self) -> str:
+        if off := workflows_off(self.github):
+            return (
+                f"Ralph loop stopped: board workflows are off: {', '.join(off)}. "
+                "Turn them on in the project's Workflows settings."
+            )
+        while True:
+            issues = self.github.milestone_issues(self.milestone)
+            self.move_closed_to_done(issues)
+            if (stop := self.step(next_issue(issues))) is not None:
+                return self.stop_message(stop.headline)
+
+    def step(self, issue: Issue | None) -> Stop | None:
+        if issue is None:
+            return Stop()
+        if halt := self.halt():
+            return Stop(halt)
+        self.work(issue)
+        return None
+
+    def halt(self) -> str | None:
+        if self.iterations == self.max_iterations:
+            return f"iteration cap ({self.max_iterations}) reached"
+        return None
+
+    def move_closed_to_done(self, issues: list[Issue]) -> None:
+        for closed in [i for i in issues if not i.is_open and i.status != DONE]:
+            self.github.set_status(closed.number, DONE)
+            self.fixed.append(closed.number)
+
+    def work(self, issue: Issue) -> None:
+        self.iterations += 1
+        self.github.set_status(issue.number, IN_PROGRESS)
+        outcome = self.session.work(issue, lambda: None)
+        pr = self.github.pull_request(outcome.pr) if outcome.pr is not None else None
+        if pr is not None:
+            self.opened.append(pr.number)
+        if reason := stuck_reason(outcome, pr):
+            self.stuck[issue.number] = reason
+            self.github.set_status(issue.number, IN_REVIEW)
+            url = self.github.comment(
+                issue.number, f"Moved to In review by the Ralph loop: {reason}."
+            )
+            self.notify(
+                f"Ralph loop: #{issue.number} needs you (moved to In review): {reason}.\n{url}"
+            )
+
+    def stop_message(self, headline: str | None) -> str:
+        still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
+        if headline is None:
+            headline = "nothing left to take" if still_open else "milestone complete"
+        lines = [f"Ralph loop stopped: {headline}."]
+        if still_open:
+            lines += ["Open:", *map(describe, still_open)]
+        if self.stuck:
+            lines += ["Moved to In review:", *(f"- #{n}: {r}" for n, r in self.stuck.items())]
+        no_notes = [n for n in self.opened if not self.github.pull_request(n).has_retro_notes]
+        if no_notes:
+            lines.append("Missing retro notes: " + ", ".join(f"PR #{n}" for n in no_notes))
+        if self.fixed:
+            moved = ", ".join(f"#{n}" for n in self.fixed)
+            lines.append(f"Moved to Done (closed, but the board had not moved them): {moved}")
+        return "\n".join(lines)
