@@ -1,0 +1,69 @@
+name: merge-when-green
+on:
+  workflow_call:
+    inputs:
+      app-id:
+        description: ID of the GitHub App that merges and updates branches
+        type: string
+        required: true
+      require-retro-notes:
+        description: Wait for a PR comment with a `## Retro notes` line
+        type: boolean
+        default: false
+    secrets:
+      app-private-key:
+        required: true
+permissions: {}
+jobs:
+  merge:
+    # A fork's PR gets no secrets, so the token step would fail; the scheduled run covers it.
+    if: >
+      github.event.pull_request == null ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # Each run checks every labelled PR, so runs queue rather than race to merge the same one.
+    concurrency:
+      group: merge-when-green-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      # The app's token, not GITHUB_TOKEN: a merge or push made with GITHUB_TOKEN starts no
+      # workflows, so main's workflows and the updated branch's checks would never run.
+      - name: Get the app's token
+        id: token
+        uses: actions/create-github-app-token@v3.4.0
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+      # The CLI comes from the same commit as this workflow, so a caller pinned at @v1 never runs
+      # a different version of the command than the workflow it called.
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      # From the default branch, so a PR can't drop a check it is failing.
+      - name: Read the default branch's required checks
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/.github/required-checks" \
+            > "$RUNNER_TEMP/required-checks"
+      - name: Merge or update each labelled PR
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          RETRO: ${{ inputs.require-retro-notes && '--require-retro-notes' || '' }}
+        run: |
+          uv run --quiet --frozen --no-dev --project .devtool devtool merge-when-green \
+            --repo "$GITHUB_REPOSITORY" --required-checks "$RUNNER_TEMP/required-checks" $RETRO
