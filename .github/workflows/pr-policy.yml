@@ -113,5 +113,9 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .devtool
       - uses: astral-sh/setup-uv@v10.3.3
+      # The token fetches workflows the caller's jobs call from other repos, to read their job
+      # names. It reaches public repos and the caller's own.
       - name: Check .github/required-checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: uv run --quiet --frozen --no-dev --project .devtool devtool required-checks
