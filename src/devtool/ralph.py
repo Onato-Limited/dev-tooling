@@ -223,7 +223,8 @@ class _Loop:
     def drop_held(self, prs: list[PullRequest]) -> None:
         """Stop waiting for a green PR an unresolved review thread blocks: it never merges."""
         for pr in prs:
-            if pr.blocked_with_checks_passing and pr.unresolved_threads:
+            held = pr.blocked_with_checks_passing and pr.unresolved_threads
+            if held and pr.number in self.pending:  # not merged, nor dropped for another reason
                 count = pr.unresolved_threads
                 threads = f"{count} unresolved review thread" + ("" if count == 1 else "s")
                 reason = f"PR #{pr.number} is held by {threads}"
@@ -242,6 +243,9 @@ class _Loop:
             unowned.append(reason)
             self.notify(f"Ralph loop: {reason}.")
             return
+        self.needs_owner(issue, reason)
+
+    def needs_owner(self, issue: int, reason: str) -> None:
         self.stuck[issue] = reason
         self.github.set_status(issue, IN_REVIEW)
         url = self.github.comment(issue, f"Moved to In review by the Ralph loop: {reason}.")
@@ -322,14 +326,7 @@ class _Loop:
             if not self.github.pull_request(other).merged:
                 self.wait_on(other, None)
         if reason := stuck_reason(outcome, pr):
-            self.stuck[issue.number] = reason
-            self.github.set_status(issue.number, IN_REVIEW)
-            url = self.github.comment(
-                issue.number, f"Moved to In review by the Ralph loop: {reason}."
-            )
-            self.notify(
-                f"Ralph loop: #{issue.number} needs you (moved to In review): {reason}.\n{url}"
-            )
+            self.needs_owner(issue.number, reason)
         elif pr.merged:  # without a PR, stuck_reason gave a reason
             self.remove_worktree(issue.number)
         else:

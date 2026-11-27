@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from ralph_fakes import Clock, FakeGitHub, FakeSession
 
@@ -439,6 +441,8 @@ def test_a_pr_that_cannot_be_brought_up_to_date_puts_its_issue_in_review_and_is_
     reason = "PR #40 can't be brought up to date with main: merging main conflicts in b.txt"
     assert (7, IN_REVIEW) in github.moves
     assert github.comments == [(7, f"Moved to In review by the Ralph loop: {reason}.")]
+    url = "https://github.com/owner/repo/issues/7#issuecomment-1"
+    assert f"Ralph loop: #7 needs you (moved to In review): {reason}.\n{url}" in notes
     assert f"- #7: {reason}" in stop.splitlines()
     assert clock.sleeps == []
 
@@ -525,3 +529,29 @@ def test_a_stuck_issues_pr_is_left_to_the_owner_to_merge():
     loop(github, session)
 
     assert github.arranged == []
+
+
+def test_a_sessions_other_pr_without_retro_notes_is_named_in_the_stop_message():
+    github = FakeGitHub([Issue(18, TODO)])
+    github.prs[127] = PullRequest(number=127, merged=True, has_retro_notes=False)
+    session = FakeSession(github, {18: (Outcome(pr=130, also=(127,)), PullRequest(130), False)})
+
+    stop = loop(github, session)
+
+    assert "Missing retro notes: PR #127" in stop.splitlines()
+
+
+def test_a_merged_pr_that_still_reads_as_held_is_simply_merged():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: pending_run(40)})
+    clock = Clock()
+
+    def merged_but_held():
+        github.merge(7, 40)
+        github.prs[40] = replace(held_by_threads(40, 1), merged=True)
+
+    clock.on_sleep = merged_but_held
+
+    stop = loop(github, session, clock=clock)
+
+    assert (stop, github.comments) == ("Ralph loop stopped: milestone complete.", [])
