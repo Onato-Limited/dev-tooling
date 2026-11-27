@@ -1,5 +1,6 @@
 import subprocess
 from importlib.resources import files
+from pathlib import Path
 
 import pytest
 
@@ -14,9 +15,8 @@ def test_the_default_prompt_names_no_project_and_has_the_placeholders_and_the_li
     assert all(
         part in prompt for part in ("{issue}", "{branch}", "`PR: #<number>`", "`NEEDS_HUMAN: ")
     )
-    assert not {"onato", "shared-core-bench", "bench"} & set(
-        prompt.lower().replace("`", " ").split()
-    )
+    assert not [name for name in ("onato", "bench") if name in prompt.lower()]
+    assert "GH_TOKEN" not in prompt  # the session's gh reads a token file; there's none to read
 
 
 def test_the_branch_name_is_the_prefix_then_the_issue():
@@ -54,6 +54,18 @@ def test_a_list_command_that_fails_raises_naming_it_and_its_error(tmp_path):
         devices.issues()
 
 
+def test_a_list_command_that_prints_something_else_raises_saying_what_it_must_print(tmp_path):
+    run = FakeRun((0, "issue-7\n", ""))
+    devices = CommandDevices("scripts/devices list", "scripts/devices prune", tmp_path, run)
+
+    with pytest.raises(DevicesError) as error:
+        devices.issues()
+
+    assert str(error.value) == (
+        "scripts/devices list printed 'issue-7': it must print one issue number per line"
+    )
+
+
 def test_a_device_is_pruned_with_the_prune_command_and_its_issue(tmp_path):
     run = FakeRun((0, "", ""))
 
@@ -71,10 +83,12 @@ def test_a_prune_that_fails_says_what_ran_and_its_error(tmp_path):
     assert failed == "scripts/devices prune 7 failed (exit 2): leased to 'issue-7 bench'"
 
 
-def test_notify_prints_the_message_and_runs_the_project_command_with_it(capsys):
+def test_notify_prints_the_message_and_runs_the_project_command_in_the_checkout(capsys, tmp_path):
     run = FakeRun((0, "", ""))
 
-    notifier("scripts/notify --quiet", run)("Ralph loop stopped: milestone complete.")
+    notifier("scripts/notify --quiet", tmp_path, run)("Ralph loop stopped: milestone complete.")
+
+    assert run.calls[0][1]["cwd"] == tmp_path
 
     assert capsys.readouterr().out == "Ralph loop stopped: milestone complete.\n"
     assert run.calls[0][0] == [
@@ -87,7 +101,7 @@ def test_notify_prints_the_message_and_runs_the_project_command_with_it(capsys):
 def test_without_a_notify_command_the_message_is_only_printed(capsys):
     run = FakeRun()
 
-    notifier(None, run)("Ralph loop stopped: milestone complete.")
+    notifier(None, Path("."), run)("Ralph loop stopped: milestone complete.")
 
     assert (capsys.readouterr().out, run.calls) == ("Ralph loop stopped: milestone complete.\n", [])
 

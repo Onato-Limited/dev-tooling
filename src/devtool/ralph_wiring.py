@@ -30,6 +30,10 @@ class CommandDevices:
         done = self._run(shlex.split(self.list_command))
         if failed := failure(self.list_command, done):
             raise DevicesError(failed)
+        if odd := [line for line in done.stdout.split() if not (line.isascii() and line.isdigit())]:
+            raise DevicesError(
+                f"{self.list_command} printed {odd[0]!r}: it must print one issue number per line"
+            )
         return [int(line) for line in done.stdout.split()]
 
     def prune(self, issue: int) -> str | None:
@@ -46,13 +50,14 @@ def failure(named: str, done: subprocess.CompletedProcess) -> str | None:
     return None
 
 
-def notifier(command: str | None, run: Runner) -> Callable[[str], None]:
-    """Prints each message, and passes it to the project's command as its last argument."""
+def notifier(command: str | None, repo: Path, run: Runner) -> Callable[[str], None]:
+    """Prints each message, and passes it to the project's command as its last argument. Like
+    the device commands, it runs in the checkout, wherever the loop was started from."""
 
     def notify(message: str) -> None:
         print(message)
         if command:
-            run([*shlex.split(command), message], check=False)
+            run([*shlex.split(command), message], cwd=repo, check=False)
 
     return notify
 

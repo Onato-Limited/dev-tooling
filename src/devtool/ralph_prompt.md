@@ -4,8 +4,9 @@ watching: never wait for an answer; when you need one, stop as described below.
 Where you are:
 - This directory is the issue's own worktree, on branch `{branch}`, cut from `origin/main` unless
   you are resuming (below). Stay in it.
-- `gh` and `git push` already act as the project's GitHub App bot (GH_TOKEN is set), and commits
-  are authored by the bot. Don't change git config or log in.
+- `gh` and `git push` already act as the project's GitHub App bot, through a `gh` wrapper and a
+  git credential helper (there is no token in the environment to read), and commits are authored
+  by the bot. Don't change git config or log in.
 - The loop has already moved the issue to In progress, and it moves every board card. Don't touch
   the project board.
 
