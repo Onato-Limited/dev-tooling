@@ -9,6 +9,7 @@ from devtool import (
     required_checks,
     review_comment,
     review_prompt,
+    review_threads,
     review_verdict,
     secrets_report,
 )
@@ -22,6 +23,7 @@ COMMANDS = {
     "review-verdict": review_verdict,
     "review-comment": review_comment,
     "review-prompt": review_prompt,
+    "review-threads": review_threads,
 }
 
 

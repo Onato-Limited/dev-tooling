@@ -104,6 +104,30 @@ Before the first review:
 Fork PRs are skipped, since they must never get the token, and a skipped job counts as passing,
 so give them a person's review instead.
 
+## Review threads
+
+Fails while the PR has an unresolved review thread, outdated ones included, and lists each one.
+It needs no secret and runs no Claude. Shown on the PR as `<your job> / threads`.
+
+Call it from its own workflow, not the Claude review's: review events there would create skipped
+review runs, and a skipped run counts as passing.
+
+```yaml
+on:
+  pull_request:
+  pull_request_review:
+  pull_request_review_comment:
+jobs:
+  review-threads:
+    uses: Onato-Limited/dev-tooling/.github/workflows/review-threads.yml@v1
+    permissions:
+      contents: read
+      pull-requests: read
+```
+
+A push, a review or a reply re-runs it. Resolving a thread starts no run, so after resolving the
+last one, re-run the failed job.
+
 ## Develop
 
 ```sh
