@@ -3,6 +3,7 @@ import sys
 from importlib.metadata import version
 
 from devtool import (
+    merge_when_green,
     pr_shape,
     pr_size,
     protected_paths,
@@ -24,6 +25,7 @@ COMMANDS = {
     "review-comment": review_comment,
     "review-prompt": review_prompt,
     "review-threads": review_threads,
+    "merge-when-green": merge_when_green,
 }
 
 
