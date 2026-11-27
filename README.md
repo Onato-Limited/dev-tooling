@@ -37,6 +37,7 @@ jobs:
 | `size` | More than `limit` changed lines, unless `approver` added the `size-approved` label | `limit` (400), `approver`; `.github/pr-size-exclude` (gitignore-style paths not counted) |
 | `protected-paths` | Changing, moving or deleting a file that matches a pattern | `protected-paths`: gitignore-style patterns, one per line (none by default, so it passes) |
 | `required-checks` | A name in `.github/required-checks` that no job reports on a PR, or a missing file | `.github/required-checks`: one check name per line, `#` comments |
+| `secrets` | gitleaks finding a possible secret in the PR's commits (redacted; each finding with its fingerprint and the fix) | `.gitleaks.toml` (extra rules) and `.gitleaksignore` (fingerprints of false positives), read from your repo root |
 | `pr-shape` | A title that isn't a conventional commit or `Structural: …`; a body that closes no issue (`Closes #12`, or any GitHub closing keyword); added lines matching `concurrency-pattern` without a `## Concurrency notes` section | `concurrency-pattern` (a regex, none by default, so that rule is off), `concurrency-paths` (gitignore-style, one per line, default all files) |
 
 `required-checks` reads your workflows the way GitHub names checks: a job's `name:`, or its id; a
