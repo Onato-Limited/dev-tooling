@@ -825,3 +825,14 @@ def test_a_milestone_finished_on_the_last_allowed_iteration_is_complete_not_capp
     stop = loop(github, FakeSession(github, {7: merged_run(40)}), max_iterations=1)
 
     assert stop == "Ralph loop stopped: milestone complete."
+
+
+def test_a_timeout_with_only_drafts_left_keeps_its_own_headline():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO, draft=True)])
+    session = FakeSession(github, {7: merged_run(40)})
+    session.improvement = Improvement(prs=(50,))
+    session.improver_merges = False
+
+    stop = loop(github, session, improves=True)
+
+    assert stop.startswith("Ralph loop stopped: auto-merge still pending after 60 minutes: PR #50.")
