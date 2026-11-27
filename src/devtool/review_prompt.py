@@ -49,7 +49,7 @@ def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) 
     parser = argparse.ArgumentParser(prog="devtool review-prompt", description=__doc__)
     parser.add_argument("--base", required=True, help="the PR's base ref, e.g. origin/main")
     parser.add_argument("--repo", required=True, help="owner/name of the PR's repository")
-    parser.add_argument("--pr", required=True, help="the PR number")
+    parser.add_argument("--pr", type=int, required=True, help="the PR number")
     parser.add_argument("--standards", default="CODING_STANDARDS.md", help="required")
     parser.add_argument("--spec", default="SPEC.md", help="used if the base branch has it")
     args = parser.parse_args(argv)
@@ -76,7 +76,7 @@ def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) 
         if path == "REVIEW.md":
             pending += includes(text)
     try:
-        earlier = earlier_threads(args.repo, int(args.pr), query)
+        earlier = earlier_threads(args.repo, args.pr, query)
     except QueryError as error:
         print(f"Review: can't read PR #{args.pr}'s review threads: {error}", file=sys.stderr)
         print(
