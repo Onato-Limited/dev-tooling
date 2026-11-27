@@ -94,6 +94,13 @@ define a format for findings, the review uses it.
 | `spec` | `SPEC.md` | Skipped when the base branch has none |
 | `allowed-bots` | none | Comma-separated bot logins whose PRs are reviewed too |
 
+Before the first review:
+- Install the [Claude GitHub App](https://github.com/apps/claude) on the repo, and set the
+  `CLAUDE_CODE_OAUTH_TOKEN` secret (`claude setup-token` makes one).
+- Merge the calling workflow to the default branch on its own. The action runs only when the
+  caller is identical to the default branch's copy, so a PR that adds or changes it gets no
+  review and fails the check.
+
 Fork PRs are skipped, since they must never get the token, and a skipped job counts as passing,
 so give them a person's review instead.
 

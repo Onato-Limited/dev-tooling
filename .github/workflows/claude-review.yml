@@ -100,6 +100,7 @@ jobs:
       # Posted here rather than by the model: Claude Code refuses a multi-line `gh pr comment
       # --body` against the allowlist, so a model-posted comment silently never arrives.
       - name: Post the review comment
+        if: steps.review.outputs.execution_file != ''
         env:
           OUTPUT: ${{ steps.review.outputs.structured_output }}
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
@@ -119,7 +120,15 @@ jobs:
         env:
           OUTPUT: ${{ steps.review.outputs.structured_output }}
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        # The action can skip itself and still succeed, leaving no run behind.
         run: |
+          if [ -z "$EXECUTION_FILE" ]; then
+            echo "Review: Claude did not run, so there is no review. The Review step's log says"
+            echo "why. Most often the Claude GitHub App is not installed on this repository, or"
+            echo "the calling workflow differs from the default branch's copy: a PR cannot add or"
+            echo "change its own reviewer. Fix that, then re-run this job."
+            exit 1
+          fi
           printf '%s' "$OUTPUT" > "$RUNNER_TEMP/output.json"
           uv run --quiet --frozen --no-dev --project .devtool devtool review-verdict \
-            --output "$RUNNER_TEMP/output.json" --execution "${EXECUTION_FILE:-/nonexistent}"
+            --output "$RUNNER_TEMP/output.json" --execution "$EXECUTION_FILE"
