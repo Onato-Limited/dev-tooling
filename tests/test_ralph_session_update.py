@@ -133,8 +133,9 @@ def test_a_conflict_the_update_hook_resolves_is_committed_and_pushed(tmp_path, h
     [
         ("echo no entries file >&2; exit 3", "update_hook failed (exit 3): no entries file"),
         ("git reset -q --hard HEAD^", "main is not merged in after update_hook"),
+        ("echo x >> a.txt && git add a.txt", "update_hook left uncommitted changes in a.txt"),
     ],
-    ids=["exits non-zero", "undoes the merge"],
+    ids=["exits non-zero", "undoes the merge", "leaves changes uncommitted"],
 )
 def test_an_update_hook_that_fails_fails_the_update_and_pushes_nothing(tmp_path, hook, message):
     seed, session = repos(tmp_path, update_hook=hook)
@@ -203,3 +204,27 @@ def test_a_merge_that_fails_without_a_conflict_fails_the_update_with_gits_error(
     failed = session.update(PullRequest(41, behind=True, branch="unrelated"))
 
     assert failed == "git merge --no-edit failed: fatal: refusing to merge unrelated histories"
+
+
+def test_a_push_the_origin_rejects_fails_the_update_with_gits_error(tmp_path):
+    seed, session = repos(tmp_path)
+    main_moves_on(seed)
+    hook = tmp_path / "origin.git" / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho protected branch >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+    failed = session.update(PullRequest(40, behind=True, branch="pr"))
+
+    assert failed.startswith("git push origin failed: ")
+    assert "protected branch" in failed
+    assert not (tmp_path / "checkout-update-40").exists()
+
+
+def test_an_update_whose_worktree_cannot_be_removed_reports_it(tmp_path):
+    seed, session = repos(tmp_path, update_hook='git worktree lock "$PWD"')
+    main_moves_on(seed)
+
+    failed = session.update(PullRequest(40, behind=True, branch="pr"))
+
+    assert failed.startswith("git worktree remove failed: fatal: cannot remove a locked")
+    assert on_origin(seed, "a.txt") == "a, later\n"
