@@ -58,3 +58,12 @@ def test_findings_fail_listing_each_one_then_the_rule_and_the_fix_without_the_se
         "    0f9e8d7c6b5a4f3e:deploy/env:aws-access-token:9\n"
     )
     assert SECRET not in out
+
+
+def test_a_single_finding_is_counted_in_the_singular(tmp_path, capsys):
+    argv = report(tmp_path, finding("a.py", 1, "generic-api-key", "a1b2c3d4"))  # gitleaks:allow
+
+    main(argv, stdin=io.StringIO())
+
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first == "Secrets: gitleaks found 1 possible secret in this PR's commits."

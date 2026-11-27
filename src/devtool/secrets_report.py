@@ -23,7 +23,8 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
         print("No secrets found in this PR's commits.")
         return 0
     # Match and Secret hold the secret itself, so they are never printed.
-    print(f"Secrets: gitleaks found {len(findings)} possible secrets in this PR's commits.")
+    count = f"{len(findings)} possible secret{'' if len(findings) == 1 else 's'}"
+    print(f"Secrets: gitleaks found {count} in this PR's commits.")
     for found in findings:
         where = f"{found['File']}:{found['StartLine']}"
         print(f"  {where}  {found['RuleID']}  (commit {found['Commit'][:7]})")
