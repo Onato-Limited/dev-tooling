@@ -70,14 +70,23 @@ def test_a_commented_out_setting_is_ignored(tmp_path):
     assert (config.notify, config.merge_mode) == (None, "label")
 
 
-def test_a_line_that_is_not_name_equals_value_fails_naming_the_line(tmp_path):
-    path = write(tmp_path, REQUIRED + "notify scripts/notify.sh\n")
+def test_blank_lines_and_indented_comments_between_settings_are_ignored(tmp_path):
+    config = load(
+        write(tmp_path, REQUIRED + "\n   \n  # off for now\n  notify=scripts/notify.sh\n")
+    )
+
+    assert config.notify == "scripts/notify.sh"
+
+
+@pytest.mark.parametrize("line", ["notify scripts/notify.sh", "=scripts/notify.sh"])
+def test_a_line_that_is_not_name_equals_value_fails_naming_the_line(tmp_path, line):
+    path = write(tmp_path, REQUIRED + line + "\n")
 
     with pytest.raises(ConfigError) as error:
         load(path)
 
     assert str(error.value) == (
-        f"Ralph loop can't start: line 8 of {path} is 'notify scripts/notify.sh'. Write each "
+        f"Ralph loop can't start: line 8 of {path} is {line!r}. Write each "
         "setting as name=value, or start the line with # to make it a comment."
     )
 

@@ -66,12 +66,12 @@ def read_settings(path: Path) -> dict[str, str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if "=" not in line:
+        name, equals, value = (part.strip() for part in line.partition("="))
+        if not (name and equals):
             raise ConfigError(
                 f"Ralph loop can't start: line {number} of {path} is {line!r}. Write each "
                 "setting as name=value, or start the line with # to make it a comment."
             )
-        name, value = (part.strip() for part in line.split("=", 1))
         if value:
             settings[name] = value
     return settings
