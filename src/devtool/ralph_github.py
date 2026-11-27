@@ -4,11 +4,14 @@ import json
 import subprocess
 from collections.abc import Callable
 
+from devtool.gates import approved_by
 from devtool.merge_decision import GREEN, RETRO_HEADING
+from devtool.merge_decision import LABEL as MERGE_WHEN_GREEN
 from devtool.ralph import GitHubError, Issue, PullRequest
 
 Run = Callable[[list[str], str | None], str]
-DRAFT = "draft"
+DRAFT, PLAN_APPROVED = "draft", "plan-approved"
+AGENT_MARKER = "> 🤖 Agent comment — written by Claude Code"
 FAILURE, SUCCESS = "FAILURE", "SUCCESS"
 
 
@@ -84,16 +87,81 @@ query($owner: String!, $repo: String!, $number: Int!) {
 """
 
 
+STATUS_LOOKUP_QUERY = """
+query($board_owner: String!, $owner: String!, $repo: String!, $number: Int!, $project: Int!) {
+  repositoryOwner(login: $board_owner) {
+    ... on ProjectV2Owner {
+      projectV2(number: $project) {
+        id
+        field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } }
+      }
+    }
+  }
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      id
+      projectItems(first: 20) {
+        nodes {
+          id
+          project { number owner { ... on User { login } ... on Organization { login } } }
+        }
+      }
+    }
+  }
+}
+"""
+
+SET_STATUS_MUTATION = """
+mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $project, itemId: $item, fieldId: $field,
+    value: { singleSelectOptionId: $option }
+  }) { projectV2Item { id } }
+}
+"""
+
+ADD_ITEM_MUTATION = """
+mutation($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: { projectId: $project, contentId: $content }) { item { id } }
+}
+"""
+
+OPEN_PRS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!, $branch: String!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      closedByPullRequestsReferences(first: 20, includeClosedPrs: false) { nodes { state } }
+    }
+    pullRequests(headRefName: $branch, states: OPEN) { totalCount }
+  }
+}
+"""
+
+
 class GitHubAdapter:
     """`repo` is `owner/name`; the board is the project `board_number` of `board_owner`, a user
     or an organization that need not own the repo."""
 
-    def __init__(self, repo: str, board_owner: str, board_number: int, review_check: str, run: Run):
+    def __init__(
+        self,
+        repo: str,
+        board_owner: str,
+        board_number: int,
+        review_check: str,
+        run: Run,
+        *,
+        branch_prefix: str,
+        approver: str,
+        merge_mode: str,
+    ):
         self.owner, self.repo = repo.split("/")
         self.board_owner = board_owner
         self.board_number = board_number
         self.review_check = review_check
         self.run = run
+        self.branch_prefix = branch_prefix
+        self.approver = approver
+        self.merge_mode = merge_mode
 
     def board_workflows(self) -> dict[str, bool]:
         data = self._graphql(WORKFLOWS_QUERY, owner=self.board_owner, project=self.board_number)
@@ -157,6 +225,84 @@ class GitHubAdapter:
             blocked_with_checks_passing=pr["mergeStateStatus"] == "BLOCKED"
             and all_passed(commits[-1]),
         )
+
+    def has_open_pr(self, issue: int) -> bool:
+        """`includeClosedPrs: false` still lists merged PRs, so their state is checked here."""
+        data = self._graphql(
+            OPEN_PRS_QUERY,
+            owner=self.owner,
+            repo=self.repo,
+            number=issue,
+            branch=f"{self.branch_prefix}/{issue}-ralph",
+        )["repository"]
+        closing = data["issue"]["closedByPullRequestsReferences"]["nodes"]
+        return data["pullRequests"]["totalCount"] > 0 or any(
+            pr["state"] == "OPEN" for pr in closing
+        )
+
+    def is_open(self, issue: int) -> bool:
+        args = [
+            "issue",
+            "view",
+            str(issue),
+            "-R",
+            self._repo(),
+            "--json",
+            "state",
+            "--jq",
+            ".state",
+        ]
+        return self.run(args, None).strip() == "OPEN"
+
+    def set_status(self, issue: int, status: str) -> None:
+        data = self._graphql(
+            STATUS_LOOKUP_QUERY,
+            board_owner=self.board_owner,
+            owner=self.owner,
+            repo=self.repo,
+            number=issue,
+            project=self.board_number,
+        )
+        board = data["repositoryOwner"]["projectV2"]
+        field = board["field"]
+        option = next((o["id"] for o in field["options"] if o["name"] == status), None)
+        if option is None:
+            raise GitHubError(
+                f"project {self.board_number} of {self.board_owner} has no Status option "
+                f"{status!r}. Add it to the board's Status field."
+            )
+        content = data["repository"]["issue"]
+        items = content["projectItems"]["nodes"]
+        item = next((i["id"] for i in items if self._on_board(i["project"])), None)
+        if item is None:
+            added = self._graphql(ADD_ITEM_MUTATION, project=board["id"], content=content["id"])
+            item = added["addProjectV2ItemById"]["item"]["id"]
+        self._graphql(
+            SET_STATUS_MUTATION, project=board["id"], item=item, field=field["id"], option=option
+        )
+
+    def comment(self, issue: int, body: str) -> str:
+        args = ["issue", "comment", str(issue), "-R", self._repo(), "--body-file", "-"]
+        return self.run(args, f"{AGENT_MARKER}\n\n{body}").strip()
+
+    def plan_approved(self, parent: int) -> bool:
+        """Only the login running the loop approves: a bot or a collaborator adding it doesn't."""
+        path = f"repos/{self._repo()}/issues/{parent}/events"
+        lines = self.run(["api", "--paginate", path, "--jq", ".[]"], None).splitlines()
+        return approved_by([json.loads(line) for line in lines], PLAN_APPROVED, self.approver)
+
+    def undraft(self, issue: int) -> None:
+        self.run(["issue", "edit", str(issue), "-R", self._repo(), "--remove-label", DRAFT], None)
+
+    def arrange_merge(self, pr: int) -> None:
+        if self.merge_mode == "label":
+            args = ["pr", "edit", str(pr), "-R", self._repo(), "--add-label", MERGE_WHEN_GREEN]
+        else:
+            args = ["pr", "merge", str(pr), "-R", self._repo(), "--auto", "--squash"]
+        self.run(args, None)
+
+    def _repo(self) -> str:
+        return f"{self.owner}/{self.repo}"
 
     def _graphql(self, query: str, **variables: object) -> dict:
         args = ["api", "graphql", "-f", f"query={query}"]
