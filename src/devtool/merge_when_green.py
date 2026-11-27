@@ -79,7 +79,12 @@ def checks(repo: str, node: dict, rest: Rest) -> dict[str, str]:
         for context in contexts
         if context["__typename"] == "StatusContext"
     }
-    runs = check_runs(repo, node["headRefOid"], rest)
+    return states | newest_states(check_runs(repo, node["headRefOid"], rest))
+
+
+def newest_states(runs: list[dict]) -> dict[str, str]:
+    """Each check run's state by name, the newest run winning when one name ran more than once."""
+    states = {}
     # A run that hasn't started yet has no started_at, and is the newest.
     for run in sorted(runs, key=lambda run: (run["started_at"] is None, run["started_at"] or "")):
         done = run["status"] == "completed"
