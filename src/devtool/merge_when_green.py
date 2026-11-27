@@ -104,7 +104,7 @@ def snapshot(repo: str, node: dict, query: Query, rest: Rest) -> PullRequest:
         mergeable=node["mergeable"],
         behind=compare["behind_by"] > 0,
         checks=checks(repo, node, rest),
-        unresolved_threads=sum(blocking(thread) for thread in threads(repo, node["number"], query)),
+        blocking_threads=sum(blocking(thread) for thread in threads(repo, node["number"], query)),
         comments=[comment["body"] for comment in node["comments"]["nodes"]],
     )
 

@@ -115,20 +115,21 @@ def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) 
         )
         return 1
     blocked = [t for t in found if blocking(t)]
+    answered = [t for t in found if not t["isResolved"] and not blocking(t)]
     if blocked:
         print(f"Review threads: {len(blocked)} blocking on PR #{args.pr}.")
         for thread in blocked:
             print(describe(thread))
         print(FIX)
-        return 1
-    left = [t for t in found if not t["isResolved"]]
-    if not left:
+        if answered:
+            print("Judgement findings answered and left open:")
+    elif answered:
+        print(
+            f"Review threads: none blocking on PR #{args.pr}. "
+            "Judgement findings answered and left open:"
+        )
+    else:
         print(f"Review threads: none unresolved on PR #{args.pr}.")
-        return 0
-    print(
-        f"Review threads: none blocking on PR #{args.pr}. "
-        "Judgement findings answered and left open:"
-    )
-    for thread in left:
+    for thread in answered:
         print(describe(thread))
-    return 0
+    return 1 if blocked else 0

@@ -193,7 +193,7 @@ def test_unresolved_review_threads_are_counted(capsys, tmp_path):
 
     run(github, tmp_path=tmp_path)
 
-    assert capsys.readouterr().out == "#12 waits: 2 unresolved review threads\n"
+    assert capsys.readouterr().out == "#12 waits: 2 blocking review threads\n"
 
 
 def test_an_answered_judgement_thread_does_not_hold_up_the_merge(capsys, tmp_path):
@@ -206,7 +206,7 @@ def test_an_answered_judgement_thread_does_not_hold_up_the_merge(capsys, tmp_pat
     run(github, tmp_path=tmp_path)
 
     assert capsys.readouterr().out == (
-        "#12 merged: feat: a thing (#12)\n#13 waits: 1 unresolved review threads\n"
+        "#12 merged: feat: a thing (#12)\n#13 waits: 1 blocking review threads\n"
     )
 
 

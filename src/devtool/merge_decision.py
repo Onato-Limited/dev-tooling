@@ -18,7 +18,7 @@ class PullRequest:
     mergeable: str
     behind: bool
     checks: dict[str, str]
-    unresolved_threads: int
+    blocking_threads: int
     comments: list[str]
 
 
@@ -53,8 +53,8 @@ def merge_decision(
     ]
     if not_green:
         return Wait(f"required checks not green: {', '.join(not_green)}")
-    if pr.unresolved_threads:
-        return Wait(f"{pr.unresolved_threads} unresolved review threads")
+    if pr.blocking_threads:
+        return Wait(f"{pr.blocking_threads} blocking review threads")
     if retro_required and not any(
         line.strip() == RETRO_HEADING for comment in pr.comments for line in comment.splitlines()
     ):

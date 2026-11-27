@@ -100,6 +100,24 @@ def test_an_answered_reviewer_judgement_thread_is_left_open_without_blocking(cap
     )
 
 
+def test_answered_judgements_are_listed_when_another_thread_blocks(capsys):
+    answered = thread(
+        "w.yml", 3, "claude", "[Spec] judgement: x", url="https://x/3", replies=[("onato", "Took")]
+    )
+    person = thread("w.yml", 8, "onato", "Why?", url="https://x/8")
+
+    code = run(pages([answered, person]))
+
+    assert code == 1
+    assert capsys.readouterr().out == (
+        "Review threads: 1 blocking on PR #12.\n"
+        "  w.yml:8  onato: Why?  https://x/8\n"
+        + FIX
+        + "Judgement findings answered and left open:\n"
+        "  w.yml:3  claude: [Spec] judgement: x  https://x/3\n"
+    )
+
+
 def test_a_reply_by_the_reviewer_itself_does_not_answer_a_judgement(capsys):
     judgement = "[Spec] judgement: maybe"
     query = pages([thread("w.yml", 5, "claude", judgement, replies=[("claude", "Still?")])])

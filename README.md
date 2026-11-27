@@ -83,8 +83,9 @@ jobs:
 The rules come from the PR's **base branch**, so a PR can't loosen the rules it is reviewed
 against: `standards` (required), `CLAUDE.md`, `spec` and `REVIEW.md` when present, and any file
 `REVIEW.md` includes with a line that is only `@<path>`. The review makes a Standards pass over
-the diff and PR body, and a Spec pass against the issue the PR closes and the spec. If your rules
-define a format for findings, the review uses it.
+the diff and PR body, and a Spec pass against the issue the PR closes and the spec. Every inline
+finding starts with a label, `[Standards]` or `[Spec]` then `hard:` or `judgement:`, which review
+threads reads. If your rules define a format for findings, the review uses it after the label.
 
 | Input | Default | |
 |---|---|---|
