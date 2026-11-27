@@ -9,6 +9,8 @@ from pathlib import Path, PurePosixPath
 from string import Template
 from typing import TextIO
 
+from devtool.review_threads import Query, QueryError, by_reviewer, gh_graphql, login, threads
+
 RULES_DIR = Path(".review-rules")
 
 
@@ -26,11 +28,28 @@ def includes(review: str) -> list[str]:
     return [p for p in paths if ".." not in PurePosixPath(p).parts]
 
 
-def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
+def earlier_threads(repo: str, pr: int, query: Query) -> str:
+    """The reviewer's earlier threads on the PR, each with its replies, as a Markdown list."""
+    found = [t for t in threads(repo, pr, query) if by_reviewer(t["comments"]["nodes"][0])]
+    if not found:
+        return "No earlier review threads."
+    lines = []
+    for thread in found:
+        where = f"{thread['path']}:{thread['line']}" if thread["line"] else thread["path"]
+        state = "resolved" if thread["isResolved"] else "open"
+        lines.append(f"- `{where}`, {state}")
+        for comment in thread["comments"]["nodes"]:
+            first, *rest = comment["body"].splitlines() or [""]
+            lines.append(f"  - {login(comment)}: {first}")
+            lines += [f"    {line}" for line in rest]
+    return "\n".join(lines)
+
+
+def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) -> int:
     parser = argparse.ArgumentParser(prog="devtool review-prompt", description=__doc__)
     parser.add_argument("--base", required=True, help="the PR's base ref, e.g. origin/main")
     parser.add_argument("--repo", required=True, help="owner/name of the PR's repository")
-    parser.add_argument("--pr", required=True, help="the PR number")
+    parser.add_argument("--pr", type=int, required=True, help="the PR number")
     parser.add_argument("--standards", default="CODING_STANDARDS.md", help="required")
     parser.add_argument("--spec", default="SPEC.md", help="used if the base branch has it")
     args = parser.parse_args(argv)
@@ -56,7 +75,18 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
         copied.append(path)
         if path == "REVIEW.md":
             pending += includes(text)
+    try:
+        earlier = earlier_threads(args.repo, args.pr, query)
+    except QueryError as error:
+        print(f"Review: can't read PR #{args.pr}'s review threads: {error}", file=sys.stderr)
+        print(
+            "  The job needs `pull-requests: read` and GH_TOKEN set. Grant it in the calling "
+            "workflow, then re-run this job.",
+            file=sys.stderr,
+        )
+        return 1
     rules = "\n".join(f"- `{RULES_DIR / path}`" for path in copied)
     template = Template(files("devtool").joinpath("review_prompt.md").read_text())
-    print(template.substitute(repo=args.repo, pr=args.pr, rules=rules), end="")
+    prompt = template.substitute(repo=args.repo, pr=args.pr, rules=rules, earlier=earlier)
+    print(prompt, end="")
     return 0
