@@ -110,36 +110,62 @@ def test_a_violation_opens_an_issue_assigned_to_the_given_login_and_fails(capsys
     assert capsys.readouterr().out == f"{ALARM}\nmain-audit: opened #31 for owner.\n"
 
 
-def test_each_pushed_commit_past_the_first_hundred_is_audited_with_its_pr_and_head_checks(
-    capsys, tmp_path
-):
-    commits, pulls, runs = [], {}, {}
-    for n in range(100):
-        found, its_pulls, its_runs = squash(f"s{n}", n, f"h{n}", checks=("lint", "ci/legacy"))
-        commits.append(found)
-        pulls |= its_pulls
-        runs |= its_runs
-    commits += [commit("zzz9999"), commit("rrr8888"), commit("ooo7777")]
-    pulls["zzz9999"] = [pull(41, "x", "hx41"), pull(42, "zzz9999", "hx42")]
-    pulls["rrr8888"] = [pull(43, "zzz9999", "hx43")]
+def no_pr(sha):
+    return (
+        f"- **every commit on main comes from a merged PR** ({sha}): {sha} was pushed to main "
+        "without a PR. Revert it on main and open the change as a PR."
+    )
+
+
+def test_pushed_commits_past_the_first_hundred_are_audited(capsys, tmp_path):
+    pushed = [squash(f"s{n}", n, f"h{n}") for n in range(100)]
+    commits = [found for found, _, _ in pushed] + [commit("ccc3333")]
+    pulls = {sha: prs for _, its, _ in pushed for sha, prs in its.items()}
+    runs = {head: checks for _, _, its in pushed for head, checks in its.items()}
+
+    run(FakeGitHub(commits, pulls, runs), tmp_path, after="ccc3333")
+
+    assert capsys.readouterr().out.splitlines()[0] == no_pr("ccc3333")
+
+
+def test_a_commit_whose_only_pr_is_still_open_has_no_merged_pr(capsys, tmp_path):
     # An open PR's merge_commit_sha is its test merge, not a commit on main.
-    pulls["ooo7777"] = [pull(44, "test-merge", "hx44", merged=False)]
-    runs |= {"hx42": [check_run("lint")], "hx43": [check_run("lint"), check_run("ci/legacy")]}
-    statuses = {"hx42": [{"context": "ci/legacy", "state": "error"}]}
-    github = FakeGitHub(commits, pulls, runs, statuses)
+    pulls = {"ooo7777": [pull(44, "test-merge", "h44", merged=False)]}
 
-    run(github, tmp_path, after="ooo7777", required="lint\nci/legacy\n")
+    run(FakeGitHub([commit("ooo7777")], pulls), tmp_path, after="ooo7777")
 
-    assert capsys.readouterr().out.splitlines()[:3] == [
-        "- **PRs merge only with every required check green** (zzz9999): #42 merged with "
-        "ci/legacy (error). Fix what those checks found in a new PR, and wait for green before "
-        "merging.",
+    assert capsys.readouterr().out.splitlines()[0] == no_pr("ooo7777")
+
+
+def test_of_a_commits_merged_prs_the_one_it_was_merged_as_counts(capsys, tmp_path):
+    pulls = {
+        "zzz9999": [pull(41, "x", "h41"), pull(42, "zzz9999", "h42")],
+        "rrr8888": [pull(43, "zzz9999", "h43")],
+    }
+    runs = {head: [check_run("lint")] for head in ("h41", "h42", "h43")}
+    github = FakeGitHub([commit("zzz9999"), commit("rrr8888")], pulls, runs)
+
+    run(github, tmp_path, after="rrr8888")
+
+    assert capsys.readouterr().out.splitlines()[0] == (
         "- **PRs merge by squash** (rrr8888): #43 was rebase-merged: it merged as zzz9999, not as "
         "this commit. Merge PRs by squash only: turn off merge commits and rebase merging in the "
-        "repo's settings, under Pull Requests.",
-        "- **every commit on main comes from a merged PR** (ooo7777): ooo7777 was pushed to main "
-        "without a PR. Revert it on main and open the change as a PR.",
-    ]
+        "repo's settings, under Pull Requests."
+    )
+
+
+def test_commit_statuses_on_the_prs_head_count_as_checks(capsys, tmp_path):
+    found, pulls, runs = squash("zzz9999", 42, "h42")
+    statuses = {"h42": [{"context": "ci/legacy", "state": "error"}]}
+    github = FakeGitHub([found], pulls, runs, statuses)
+
+    run(github, tmp_path, after="zzz9999", required="lint\nci/legacy\n")
+
+    assert capsys.readouterr().out.splitlines()[0] == (
+        "- **PRs merge only with every required check green** (zzz9999): #42 merged with "
+        "ci/legacy (error). Fix what those checks found in a new PR, and wait for green before "
+        "merging."
+    )
 
 
 def test_a_push_past_what_github_lists_is_a_violation_and_the_listed_commits_are_audited(
