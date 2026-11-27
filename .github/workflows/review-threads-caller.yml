@@ -1,0 +1,14 @@
+name: review-threads-caller
+# Its own workflow, not claude.yml's: review events there would create skipped review runs, and a
+# skipped run counts as passing.
+on:
+  pull_request:
+  pull_request_review:
+  pull_request_review_comment:
+permissions: {}
+jobs:
+  review-threads:
+    uses: Onato-Limited/dev-tooling/.github/workflows/review-threads.yml@v1
+    permissions:
+      contents: read
+      pull-requests: read
