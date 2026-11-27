@@ -177,6 +177,44 @@ A PR that isn't ready is left alone. The log gives one line per PR saying what i
 for, and a waiting PR doesn't fail the run. A run fails only when GitHub refuses a call, and the
 log says which PR and why.
 
+## Main audit
+
+For repos where `main` can't be protected. On every push to `main` it checks each pushed commit
+against the policy:
+- the push wasn't forced;
+- the commit came from a merged PR;
+- that PR was squash-merged (no merge commit, no rebase);
+- every check in `.github/required-checks` was green on the PR's head. The list is read as it
+  was before the push, so a push can't drop the check it fails.
+
+GitHub lists at most 250 of a push's commits. A longer push is itself reported, and the listed
+commits are still checked.
+
+A failure opens a `policy-violation` issue assigned to `assignee`, and GitHub emails them. That
+matters when the push came from a bot. While that issue is open, later failures are added to it
+as comments. Each entry gives the rule, the commit, what was found, the fix and the run link. The
+run fails too, so the push shows a red X on `main`. Close the issue once it's dealt with.
+
+This only checks how commits got onto `main`. Run your full check set on `main` as well, on push
+and nightly.
+
+```yaml
+on:
+  push:
+    branches: [main]
+jobs:
+  main-audit:
+    uses: Onato-Limited/dev-tooling/.github/workflows/main-audit.yml@v1
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+      issues: write
+    with:
+      assignee: your-login
+```
+
 ## Develop
 
 ```sh

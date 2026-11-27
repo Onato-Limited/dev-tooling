@@ -1,0 +1,63 @@
+name: main-audit
+on:
+  workflow_call:
+    inputs:
+      assignee:
+        description: Login the policy-violation issue is assigned to; GitHub emails them
+        type: string
+        required: true
+permissions: {}
+jobs:
+  audit:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Pushes are audited one at a time, so two close together can't both open an issue.
+    concurrency:
+      group: main-audit-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+      issues: write
+    steps:
+      # The CLI comes from the same commit as this workflow, so a caller pinned at @v1 never runs
+      # a different version of the command than the workflow it called.
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      # As main was before the push, so the push can't drop the check it fails. A push that
+      # creates the branch has no before, so it reads the pushed commit's.
+      - name: Read the required checks from before the push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          ref="$BEFORE"
+          if [ "$ref" = "0000000000000000000000000000000000000000" ]; then ref="$AFTER"; fi
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/.github/required-checks?ref=$ref" \
+            > "$RUNNER_TEMP/required-checks"
+      - name: Audit the push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSIGNEE: ${{ inputs.assignee }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          uv run --quiet --frozen --no-dev --project .devtool devtool main-audit \
+            --repo "$GITHUB_REPOSITORY" --event "$GITHUB_EVENT_PATH" \
+            --required-checks "$RUNNER_TEMP/required-checks" \
+            --assignee "$ASSIGNEE" --run-url "$RUN_URL"
