@@ -9,10 +9,11 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
 
-from devtool.ralph import POLL_SECONDS, Improvement, Issue, Outcome, PullRequest
+from devtool.ralph import POLL_SECONDS, Improvement, Issue, Outcome, PullRequest, branch_name
 from devtool.ralph_token import TokenError, TokenFile
 
 STREAM = ["--permission-mode", "auto", "--output-format", "stream-json", "--verbose"]
@@ -92,7 +93,8 @@ class ClaudeSession:
         resuming, failed = self._open_worktree(worktree, branch)
         if failed:
             return Outcome(pr=None, needs_human=failed)
-        prompt = (self.repo / ".ralph" / "PROMPT.md").read_text()
+        own = self.repo / ".ralph" / "PROMPT.md"
+        prompt = (own if own.exists() else files("devtool").joinpath("ralph_prompt.md")).read_text()
         prompt = prompt.replace("{issue}", str(issue.number)).replace("{branch}", branch)
         if resuming:
             note, failed = self._resuming(branch)
@@ -226,7 +228,7 @@ class ClaudeSession:
         return self.run(args, cwd=worktree, env=env, capture_output=True, text=True)
 
     def _branch(self, issue: int) -> str:
-        return f"{self.branch_prefix}/{issue}-ralph"
+        return branch_name(self.branch_prefix, issue)
 
     def _worktree(self, issue: int) -> Path:
         return self.repo.parent / f"{self.repo.name}-{issue}"

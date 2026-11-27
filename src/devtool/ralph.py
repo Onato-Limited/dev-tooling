@@ -94,6 +94,11 @@ class Devices(Protocol):
     def prune(self, issue: int) -> str | None: ...  # why it stays, if it does
 
 
+def branch_name(prefix: str, issue: int) -> str:
+    """The branch an issue's sessions work on, and the loop looks for its PR on."""
+    return f"{prefix}/{issue}-ralph"
+
+
 def next_issue(issues: list[Issue]) -> Issue | None:
     """The lowest-numbered open Todo issue with no open blocker that isn't a draft. Only Todo is
     taken, so an Attended issue never is."""
