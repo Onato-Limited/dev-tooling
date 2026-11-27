@@ -367,3 +367,17 @@ def test_a_closed_issue_the_board_left_in_review_is_moved_to_done_not_released()
     loop(github, session)
 
     assert (github.moves, github.comments, session.removed) == ([(6, DONE)], [], [])
+
+
+def test_the_hour_to_merge_starts_again_after_a_session():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)], blocked_by={8: (7,)})
+    session = FakeSession(github, {7: pending_run(40), 8: pending_run(41)})
+    clock = Clock()
+    session.while_running[8] = lambda: setattr(clock, "now", clock.now + 3600)
+    merges = iter([(7, 40), (8, 41)])
+    clock.on_sleep = lambda: github.merge(*next(merges))
+
+    stop = loop(github, session, clock=clock)
+
+    assert (session.worked, clock.sleeps) == ([7, 8], [60, 60])
+    assert stop == "Ralph loop stopped: milestone complete."
