@@ -8,6 +8,7 @@ from devtool import (
     pr_shape,
     pr_size,
     protected_paths,
+    ralph_command,
     required_checks,
     review_comment,
     review_prompt,
@@ -28,6 +29,7 @@ COMMANDS = {
     "review-threads": review_threads,
     "merge-when-green": merge_when_green,
     "main-audit": main_audit,
+    "ralph": ralph_command,
 }
 
 
