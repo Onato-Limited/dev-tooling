@@ -142,7 +142,21 @@ def test_the_token_request_posts_to_the_github_api_with_the_jwt_as_bearer():
     assert request.get_header("Authorization") == "Bearer jwt.value.sig"
 
 
-def test_a_failed_token_request_stops_the_loop_naming_the_request_and_what_to_check():
+def test_a_token_request_github_refuses_names_the_request_the_status_and_what_to_check():
+    def urlopen(request):
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+    with pytest.raises(TokenError) as error:
+        github_post(urlopen)("/app/installations/1/access_tokens", "jwt")
+
+    assert str(error.value) == (
+        "Ralph loop can't get a GitHub token: POST /app/installations/1/access_tokens: "
+        "HTTP 404 Not Found. Check app_id and installation_id in .ralph/config, and that the "
+        "keychain key is that app's."
+    )
+
+
+def test_a_token_request_that_never_reached_github_says_so_without_the_config_hint():
     def urlopen(request):
         raise urllib.error.URLError("nodename nor servname provided")
 
@@ -150,9 +164,9 @@ def test_a_failed_token_request_stops_the_loop_naming_the_request_and_what_to_ch
         github_post(urlopen)("/app/installations/1/access_tokens", "jwt")
 
     assert str(error.value) == (
-        "Ralph loop can't get a GitHub token: POST /app/installations/1/access_tokens failed: "
-        "<urlopen error nodename nor servname provided>. Check app_id and installation_id in "
-        ".ralph/config, and that the keychain key is that app's."
+        "Ralph loop can't get a GitHub token: POST /app/installations/1/access_tokens didn't "
+        "reach GitHub: <urlopen error nodename nor servname provided>. Check the network "
+        "connection, then start the loop again."
     )
 
 
