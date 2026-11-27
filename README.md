@@ -226,6 +226,96 @@ jobs:
       assignee: your-login
 ```
 
+## Ralph loop
+
+`devtool ralph` works through a milestone's issues unattended, one fresh Claude session per
+issue, until the milestone is done or something needs you. Run it from the project's checkout:
+
+```sh
+uvx --from git+https://github.com/Onato-Limited/dev-tooling@v1 devtool ralph --milestone 12
+```
+
+- `--milestone N` is the parent issue; its sub-issues are the milestone.
+- `--dry-run` prints the issue it would take next, and changes nothing.
+- `--max-iterations N` caps the sessions it starts (3 by default).
+
+Each pass takes the lowest-numbered open Todo issue with no open blocker, moves it to In
+progress, and starts `claude` in a worktree of its own on `<prefix>/<issue>-ralph`. The session
+opens a PR, and the loop arranges its merge, keeps it up to date with `main`, and waits for it.
+An issue moves to In review, and you're told, when the session says `NEEDS_HUMAN:` or opens no
+PR, or when its PR has had changes requested 3 times, has failed CI 3 runs in a row, can't be
+brought up to date with `main` (a conflict, or `update_hook` failed), or is green but held by an
+unresolved review thread. After 5 merged PRs, and before it
+stops, an improver session reviews them if the project has `.ralph/IMPROVE.md`.
+
+The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
+PRs still haven't merged after it has waited an hour for them. It won't start while `main`'s
+latest `audit_check` run is red or a `policy-violation` issue is open (see
+[Main audit](#main-audit)); that stop reads `Ralph loop stopped: NEEDS_HUMAN: …`.
+
+Every message to you starts `Ralph loop`. A `notify` command that should only page for what
+needs you can match `needs you`, `NEEDS_HUMAN:`, `needs your decision` and `can't start`; every
+stop starts `Ralph loop stopped:` or `Ralph loop can't`.
+
+### What it runs as
+
+- **You**, through `gh`: reading and moving the board, labels and comments. A GitHub App can't
+  move cards on a user-owned project. Your login is the only one whose `plan-approved` counts.
+- **The project's GitHub App**, in each session: commits, pushes and PRs, authored as
+  `<app_slug>[bot]`. The bot's user ID, for its commit email, isn't configured: each run, a dry
+  run included, looks it up with `gh api users/<app_slug>[bot]`, so a wrong `app_slug` stops the
+  loop there. Give the app read and write access to Contents, Pull requests and Issues
+  (and Workflows, if its PRs may change `.github/workflows`), and read access to Checks. Install it on the repo, and keep its private key in
+  your login keychain under the app's slug:
+  `security add-generic-password -s <app_slug> -a private-key -w "$(cat <key>.pem)"`.
+  A real run mints a token before taking an issue, so a missing key stops it at once.
+
+Branches use the repo's git identity as their prefix: `git config github.user`, or else your
+email's name without GitHub's `NNN+`.
+
+### The board
+
+A GitHub project with a Status field whose options are Todo, In progress, In review, Done and
+Attended. The loop never takes an Attended issue, so put the ones you work yourself there. Turn
+on the project's built-in workflows Item closed, Pull request merged, Pull request linked to
+issue and Auto-add to project; the loop won't start without them.
+
+An issue labelled `draft` is proposed, not planned. Once you add `plan-approved` to the
+milestone, the loop removes `draft` and moves each draft to Todo, leaving Attended ones where
+they are.
+
+### `.ralph/config`
+
+One `name=value` per line. A line starting with `#` is a comment; a `#` later in a line is part
+of the value.
+
+| Key | |
+|---|---|
+| `app_id`, `installation_id`, `app_slug` | The GitHub App, and the installation on this repo. Required. |
+| `board_owner`, `board_number` | The project: its owner (a user or an organization) and the number from its URL. Required. |
+| `merge_mode` | `auto` turns on auto-merge for each PR; `label` adds `merge-when-green` (see [Merge when green](#merge-when-green)). Required. |
+| `review_check` | The review's check name, `claude / review` by default. |
+| `audit_check` | The main audit's check name, `main-audit / audit` by default. |
+| `notify` | A command run with each message to you as its last argument. Every message is printed too. |
+| `cleanup_list`, `cleanup_prune` | Set both or neither. The first prints the issue numbers that have a device of their own (a simulator, say), one per line; the second, given an issue, removes its device. The loop prunes each closed issue's device after every pass. |
+| `update_hook` | A shell command run as the bot after `main` is merged into a PR's branch, in that worktree. It may resolve conflicts and commit. The update fails if it exits non-zero or leaves a conflict. |
+| `session_path` | Directories put first on the session's `PATH`, separated by `:`; relative ones are from the checkout. |
+
+Commands run in the checkout.
+
+### Prompts
+
+`.ralph/PROMPT.md` is what each session is told, with `{issue}` and `{branch}` filled in.
+Without one the loop uses its own, which reads the project's `CLAUDE.md`. Either way the
+session's last message must end with a `PR: #<number>` line once it has a PR, and a
+`NEEDS_HUMAN: <reason>` line when it stops for you.
+
+`.ralph/IMPROVE.md` is the improver's prompt, with `{prs}` filled in (`PRs #60, #61`). It
+ends with a `PR: #<number>` line for each PR it opens and a `PROPOSED: #<number>` line for
+each issue it proposes; you're told about each proposal.
+
+Each session's output is in `.ralph/logs/`.
+
 ## Develop
 
 ```sh
