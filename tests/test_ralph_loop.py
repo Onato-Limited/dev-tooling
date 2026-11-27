@@ -748,3 +748,48 @@ def test_the_improvers_open_pr_is_merged_like_any_other_and_not_reviewed_again()
     loop(github, session, clock=clock, improves=True)
 
     assert (github.arranged, clock.sleeps, session.improved) == ([50], [60], [((40,), 1)])
+
+
+def test_the_improvers_pr_gets_its_own_hour_to_merge():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: pending_run(40)})
+    session.improvement = Improvement(prs=(50,))
+    session.improver_merges = False
+    clock = Clock()
+    session.while_running["improve"] = lambda: setattr(clock, "now", clock.now + 3600)
+    merges = iter(
+        [lambda: github.merge(7, 40), lambda: github.prs.update({50: PullRequest(50, merged=True)})]
+    )
+    clock.on_sleep = lambda: next(merges)()
+
+    stop = loop(github, session, clock=clock, improves=True)
+
+    assert clock.sleeps == [60, 60]
+    assert stop == "Ralph loop stopped: milestone complete.\nImprover PRs: PR #50"
+
+
+def test_at_the_iteration_cap_the_improver_still_reviews_the_last_prs():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: merged_run(40)})
+
+    loop(github, session, max_iterations=1, improves=True)
+
+    assert session.improved == [((40,), 1)]
+
+
+def test_a_closed_draft_is_not_undrafted_or_moved_when_the_plan_is_approved():
+    github = FakeGitHub([Issue(7, DONE, is_open=False, draft=True), Issue(8, TODO, draft=True)])
+    github.approved = True
+    session = FakeSession(github, {8: merged_run(41)})
+
+    loop(github, session)
+
+    assert (github.undrafted, (7, TODO) in github.moves) == ([8], False)
+
+
+def test_without_drafts_the_loop_does_not_ask_whether_the_plan_is_approved():
+    github = FakeGitHub([Issue(7, TODO)])
+
+    loop(github, FakeSession(github, {7: merged_run(40)}))
+
+    assert github.plan_asked == 0

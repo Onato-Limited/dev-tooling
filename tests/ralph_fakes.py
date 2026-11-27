@@ -21,6 +21,7 @@ class FakeGitHub:
         self.arranged = []  # PRs whose merge the loop arranged, in order
         self.approved = False  # the owner's plan-approved label on the milestone's parent
         self.undrafted = []
+        self.plan_asked = 0
 
     def board_workflows(self):
         return self.workflows
@@ -48,6 +49,7 @@ class FakeGitHub:
 
     def plan_approved(self, parent):
         assert parent == 2
+        self.plan_asked += 1
         return self.approved
 
     def undraft(self, issue):

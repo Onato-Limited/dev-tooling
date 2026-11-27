@@ -219,7 +219,7 @@ class _Loop:
         self.refresh_pending()
         if issue is None:
             stop = self.wait_for_merges(Stop())
-            if stop == Stop() and self.merged and self.improves and self.halt() is None:
+            if stop == Stop() and self.merged and self.improves:
                 self.improve()
                 return None  # its PRs need merging before the loop stops
             return stop
@@ -233,6 +233,7 @@ class _Loop:
         return None
 
     def improve(self) -> None:
+        self.waiting_since = None  # its PRs get their own hour, as a session's do
         prs, self.merged = tuple(self.merged), []
         improvement = self.session.improve(prs, self.update_behind_pending)
         self.improvements.append(improvement)
