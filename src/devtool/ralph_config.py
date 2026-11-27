@@ -56,6 +56,11 @@ def load(path: Path) -> Config:
             f"Ralph loop can't start: board_number in {path} is {settings['board_number']!r}. "
             "Set it to the project's number, from its URL (.../projects/<number>)."
         )
+    for key, other in (("cleanup_list", "cleanup_prune"), ("cleanup_prune", "cleanup_list")):
+        if key in settings and other not in settings:
+            raise ConfigError(
+                f"Ralph loop can't start: {path} sets {key} without {other}. Set both, or neither."
+            )
     return Config(**{**settings, "board_number": int(settings["board_number"])})
 
 

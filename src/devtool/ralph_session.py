@@ -65,13 +65,15 @@ class Bot:
             "GIT_AUTHOR_EMAIL": email,
             "GIT_COMMITTER_NAME": self.login,
             "GIT_COMMITTER_EMAIL": email,
-            "GIT_CONFIG_COUNT": "3",
+            "GIT_CONFIG_COUNT": "4",
             "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
             "GIT_CONFIG_VALUE_0": "git@github.com:",
-            "GIT_CONFIG_KEY_1": "credential.https://github.com.helper",
-            "GIT_CONFIG_VALUE_1": "",
+            "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_1": "ssh://git@github.com/",
             "GIT_CONFIG_KEY_2": "credential.https://github.com.helper",
-            "GIT_CONFIG_VALUE_2": helper,
+            "GIT_CONFIG_VALUE_2": "",
+            "GIT_CONFIG_KEY_3": "credential.https://github.com.helper",
+            "GIT_CONFIG_VALUE_3": helper,
         }
 
 
@@ -192,6 +194,9 @@ class ClaudeSession:
             return f"merging main conflicts in {', '.join(conflicted)}"
         if self._git_in(worktree, env, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]) is None:
             return self._git_in(worktree, env, ["commit", "--no-edit"])  # the hook resolved it
+        status = self._run_in(worktree, env, ["git", "status", "--porcelain"]).stdout
+        if left := [line[3:] for line in status.splitlines()]:
+            return f"update_hook left uncommitted changes in {', '.join(left)}"
         if self._git_in(worktree, env, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]):
             return merge_failed or "main is not merged in after update_hook"
         return None

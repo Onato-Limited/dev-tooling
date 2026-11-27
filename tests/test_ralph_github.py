@@ -612,8 +612,26 @@ def main_history(*commits):
         ),
         ([[run("lint", "SUCCESS", "2026-11-27T08:00:00Z")]], None),
         ([None, [audit_run("FAILURE")]], "https://github.com/owner/repo/actions/runs/9"),
+        (
+            [[audit_run("FAILURE"), audit_run("SKIPPED", "2026-11-27T09:00:00Z", run_id=10)]],
+            "https://github.com/owner/repo/actions/runs/9",
+        ),
+        (
+            [[audit_run("SKIPPED", run_id=10)], [audit_run("FAILURE")]],
+            "https://github.com/owner/repo/actions/runs/9",
+        ),
     ],
-    ids=["red", "green", "still running", "other checks", "re-run green", "no audit", "no runs"],
+    ids=[
+        "red",
+        "green",
+        "still running",
+        "other checks",
+        "re-run green",
+        "no audit",
+        "no runs",
+        "skipped after red",
+        "only skipped",
+    ],
 )
 def test_the_latest_completed_audit_run_on_main_names_its_url_when_it_failed(history, failed):
     gh = FakeGh(main_history(*history))
