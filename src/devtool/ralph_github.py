@@ -4,6 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable
 
+from devtool import main_audit
 from devtool.gates import approved_by
 from devtool.merge_decision import GREEN, RETRO_HEADING
 from devtool.merge_decision import LABEL as MERGE_WHEN_GREEN
@@ -329,7 +330,7 @@ class GitHubAdapter:
         return None
 
     def policy_violations(self) -> list[int]:
-        args = ["issue", "list", "-R", self._repo(), "--label", "policy-violation"]
+        args = ["issue", "list", "-R", self._repo(), "--label", main_audit.LABEL]
         args += ["--state", "open", "--json", "number", "--jq", ".[].number"]
         return [int(n) for n in self.run(args, None).split()]
 
