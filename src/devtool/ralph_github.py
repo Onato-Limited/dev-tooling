@@ -318,12 +318,14 @@ class GitHubAdapter:
 
     def failed_audit(self) -> str | None:
         """The newest completed audit run on main's latest commits, by its URL if it failed. A
-        repo without one (its main is protected instead) has nothing to fail."""
+        repo without one (its main is protected instead) has nothing to fail. A skipped run
+        audited nothing: a tag pushed at main's head can add one after a red run."""
         data = self._graphql(MAIN_AUDIT_QUERY, owner=self.owner, repo=self.repo)
         for commit in data["repository"]["defaultBranchRef"]["target"]["history"]["nodes"]:
             rollup = commit["statusCheckRollup"]
             nodes = rollup["contexts"]["nodes"] if rollup else []
-            done = [n for n in nodes if n.get("name") == self.audit_check and n["conclusion"]]
+            runs = [n for n in nodes if n.get("name") == self.audit_check]
+            done = [run for run in runs if run["conclusion"] not in UNDECIDED]
             if done:
                 newest = max(done, key=lambda run: run["startedAt"])
                 return None if newest["conclusion"] in GREEN else newest["detailsUrl"]
@@ -343,6 +345,9 @@ class GitHubAdapter:
             # -F would send a login such as 2048 as a number; only ints go typed.
             args += ["-F" if isinstance(value, int) else "-f", f"{name}={value}"]
         return json.loads(self.run(args, None))["data"]
+
+
+UNDECIDED = {None, "SKIPPED"}
 
 
 def check_runs(commit: dict) -> dict[str, str]:
