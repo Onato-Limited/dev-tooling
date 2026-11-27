@@ -817,3 +817,11 @@ def test_without_drafts_the_loop_does_not_ask_whether_the_plan_is_approved():
     loop(github, FakeSession(github, {7: merged_run(40)}))
 
     assert github.plan_asked == 0
+
+
+def test_a_milestone_finished_on_the_last_allowed_iteration_is_complete_not_capped():
+    github = FakeGitHub([Issue(7, TODO)])
+
+    stop = loop(github, FakeSession(github, {7: merged_run(40)}), max_iterations=1)
+
+    assert stop == "Ralph loop stopped: milestone complete."
