@@ -1,0 +1,38 @@
+name: review-threads
+on:
+  workflow_call:
+permissions: {}
+jobs:
+  threads:
+    runs-on: ubuntu-latest
+    # A reply and a review seconds apart would otherwise race; only the newest count matters.
+    concurrency:
+      group: review-threads-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # The CLI comes from the same commit as this workflow, so a caller pinned at @v1 never runs
+      # a different version of the check than the workflow it called.
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Check the PR's review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: >
+          uv run --quiet --frozen --no-dev --project .devtool devtool review-threads
+          --repo "$GITHUB_REPOSITORY" --pr "$PR"
