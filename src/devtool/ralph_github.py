@@ -71,6 +71,11 @@ class GitHubAdapter:
 
     def board_workflows(self) -> dict[str, bool]:
         data = self._graphql(WORKFLOWS_QUERY, owner=self.board_owner, project=self.board_number)
+        if data["repositoryOwner"] is None:  # an unknown login is null, not an error
+            raise GitHubError(
+                f"GitHub has no user or organization {self.board_owner}. Set board_owner in "
+                f".ralph/config to the login that owns project {self.board_number}."
+            )
         nodes = data["repositoryOwner"]["projectV2"]["workflows"]["nodes"]
         return {node["name"]: node["enabled"] for node in nodes}
 
@@ -96,13 +101,15 @@ class GitHubAdapter:
         return "No status"
 
     def _on_board(self, project: dict) -> bool:
-        """Project numbers are per owner, so both must match."""
+        """Project numbers are per owner, so both must match; logins match in any case."""
         return (
-            project["number"] == self.board_number and project["owner"]["login"] == self.board_owner
+            project["number"] == self.board_number
+            and project["owner"]["login"].casefold() == self.board_owner.casefold()
         )
 
     def _graphql(self, query: str, **variables: object) -> dict:
         args = ["api", "graphql", "-f", f"query={query}"]
         for name, value in variables.items():
-            args += ["-F", f"{name}={value}"]
+            # -F would send a login such as 2048 as a number; only ints go typed.
+            args += ["-F" if isinstance(value, int) else "-f", f"{name}={value}"]
         return json.loads(self.run(args, None))["data"]

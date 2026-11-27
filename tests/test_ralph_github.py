@@ -110,7 +110,7 @@ def sent_query(call):
 
 def sent_variables(call):
     args, _ = call
-    return [args[i + 1] for i, arg in enumerate(args) if arg == "-F"]
+    return [args[i + 1] for i, arg in enumerate(args) if arg in ("-f", "-F")][1:]
 
 
 def test_a_board_owned_by_an_organization_or_another_user_is_read_from_that_owner():
@@ -153,6 +153,42 @@ class FakeSubprocess:
     def __call__(self, args, **kwargs):
         self.calls.append((args, kwargs))
         return self.result
+
+
+def test_the_board_owner_matches_whatever_its_case():
+    gh = FakeGh(
+        {
+            "repository": {
+                "issue": {
+                    "subIssues": {"nodes": [sub_issue(7, status="Todo", board_owner="Some-Org")]}
+                }
+            }
+        }
+    )
+
+    assert adapter(gh, board_owner="some-org").milestone_issues(2) == [Issue(7, "Todo")]
+
+
+def test_a_board_owner_github_does_not_know_fails_naming_it_and_the_fix():
+    gh = FakeGh({"repositoryOwner": None})
+
+    with pytest.raises(GitHubError) as error:
+        adapter(gh, board_owner="no-such-org").board_workflows()
+
+    assert str(error.value) == (
+        "GitHub has no user or organization no-such-org. Set board_owner in .ralph/config to "
+        "the login that owns project 2."
+    )
+
+
+def test_text_is_sent_as_a_string_and_only_numbers_as_numbers():
+    gh = FakeGh({"repositoryOwner": {"projectV2": {"workflows": {"nodes": []}}}})
+
+    adapter(gh, board_owner="2048").board_workflows()
+
+    args, _ = gh.calls[0]
+    assert args[args.index("owner=2048") - 1] == "-f"
+    assert args[args.index("project=2") - 1] == "-F"
 
 
 def test_gh_runner_sends_stdin_to_gh_and_returns_its_output():
