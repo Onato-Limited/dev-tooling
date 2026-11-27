@@ -339,17 +339,31 @@ def test_at_the_iteration_cap_the_loop_still_waits_for_its_open_prs():
     assert stop.startswith("Ralph loop stopped: iteration cap (1) reached.\n")
 
 
-def test_an_issue_whose_pr_merges_while_the_board_is_read_is_not_worked_again():
+def test_an_issue_whose_pr_merges_just_after_the_board_is_read_is_not_worked_again():
     github = FakeGitHub([Issue(7, TODO)])
     session = FakeSession(github, {7: pending_run(40)})
     session.while_running[7] = lambda: github.set_status(7, IN_REVIEW)
+    clock = Clock()
+    read = github.milestone_issues
 
-    def merges_as_it_is_read(issue):
-        github.merge(7, 40)
-        return False
+    def merges_after_the_read(milestone):
+        issues = read(milestone)
+        if session.worked:
+            github.merge(7, 40)
+        return issues
 
-    github.has_open_pr = merges_as_it_is_read
+    github.milestone_issues = merges_after_the_read
+
+    stop = loop(github, session, clock=clock)
+
+    assert (session.worked, clock.sleeps, github.comments) == ([7], [], [])
+    assert stop == "Ralph loop stopped: milestone complete."
+
+
+def test_a_closed_issue_the_board_left_in_review_is_moved_to_done_not_released():
+    github = FakeGitHub([Issue(6, IN_REVIEW, is_open=False)])
+    session = FakeSession(github, {})
 
     loop(github, session)
 
-    assert session.worked == [7]
+    assert (github.moves, github.comments, session.removed) == ([(6, DONE)], [], [])
