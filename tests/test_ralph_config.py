@@ -128,6 +128,13 @@ def test_an_unknown_key_fails_naming_it_and_the_keys_there_are(tmp_path):
     )
 
 
+@pytest.mark.parametrize("mode", ["auto", "label"])
+def test_each_merge_mode_loads(tmp_path, mode):
+    config = load(write(tmp_path, REQUIRED.replace("merge_mode=label", f"merge_mode={mode}")))
+
+    assert config.merge_mode == mode
+
+
 def test_a_merge_mode_other_than_auto_or_label_fails_naming_the_two(tmp_path):
     path = write(tmp_path, REQUIRED.replace("merge_mode=label", "merge_mode=squash"))
 
