@@ -5,10 +5,9 @@ permissions: {}
 jobs:
   threads:
     runs-on: ubuntu-latest
-    # A reply and a review seconds apart would otherwise race; only the newest count matters.
-    concurrency:
-      group: review-threads-${{ github.repository }}-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+    # No concurrency group: a review fires an event per inline comment at once, and a cancelled
+    # run blocks branch protection until it is re-run. Each run reads the threads live; only one
+    # that read just before a resolve reports stale, and the next review event's run corrects it.
     permissions:
       contents: read
       pull-requests: read
