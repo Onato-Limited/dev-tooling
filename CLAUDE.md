@@ -12,11 +12,13 @@ or read from the caller's repo, never written here.
 
 # Workflow
 
-- One issue = one branch (`swilliams/<issue#>-<slug>` from `origin/main`) in its own worktree = one
-  PR whose body says `Closes #<n>`.
+- One issue = one branch (`<prefix>/<issue#>-<slug>` from `origin/main`) in its own worktree = one
+  PR whose body says `Closes #<n>`. The prefix is the repo's git identity: `git config github.user`,
+  or else the local part of `git config user.email` without GitHub's `NNN+`.
 - PR titles are conventional commits (`feat: …`, `fix: …`) or start `Structural:`. PRs are
   squash-merged, so the title and body become the commit on `main`.
-- `main` is protected: PR only, linear history, required checks `lint` and `coverage`.
+- `main` is protected: PR only, linear history, and the checks in `.github/required-checks` must
+  pass. When a check is added there, add it to `main`'s required status checks too.
 - Tests first: write one failing test, see it fail for the expected reason, write only enough code
   to pass, refactor when green. Say in the PR that each test was seen failing.
 
