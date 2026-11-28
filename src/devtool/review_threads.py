@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -31,10 +30,9 @@ Query = Callable[[str, dict], dict]
 
 # The Claude app. A user account can have the same login, so the author must also be a Bot.
 REVIEWER = "claude"
-JUDGEMENT = re.compile(r"\[[^\]]+\]\s+judgement\b", re.IGNORECASE)
 FIX = (
-    "  Resolve each hard finding and each person's thread before the PR merges. A judgement "
-    "finding from the reviewer needs a reply saying why it was taken or left."
+    "  Resolve every thread before the PR merges. Reply to a judgement finding saying whether it "
+    "was taken or left, then resolve it."
 )
 
 
@@ -78,19 +76,9 @@ def by_reviewer(comment: dict) -> bool:
     return author.get("__typename") == "Bot" and author.get("login") == REVIEWER
 
 
-def answered_judgement(thread: dict) -> bool:
-    """A judgement finding from the reviewer that someone else has replied to."""
-    first, *replies = thread["comments"]["nodes"]
-    return (
-        by_reviewer(first)
-        and JUDGEMENT.match(first["body"]) is not None
-        and any(not by_reviewer(reply) for reply in replies)
-    )
-
-
 def blocking(thread: dict) -> bool:
-    """Whether the thread holds up the merge: unresolved, and not an answered judgement."""
-    return not thread["isResolved"] and not answered_judgement(thread)
+    """Whether the thread holds up the merge: every unresolved one does."""
+    return not thread["isResolved"]
 
 
 def describe(thread: dict) -> str:
@@ -120,21 +108,11 @@ def main(argv: list[str], stdin: TextIO = sys.stdin, query: Query = gh_graphql) 
         )
         return 1
     blocked = [t for t in found if blocking(t)]
-    answered = [t for t in found if not t["isResolved"] and not blocking(t)]
-    if blocked:
-        print(f"Review threads: {len(blocked)} blocking on PR #{args.pr}.")
-        for thread in blocked:
-            print(describe(thread))
-        print(FIX)
-        if answered:
-            print("Judgement findings answered and left open:")
-    elif answered:
-        print(
-            f"Review threads: none blocking on PR #{args.pr}. "
-            "Judgement findings answered and left open:"
-        )
-    else:
+    if not blocked:
         print(f"Review threads: none unresolved on PR #{args.pr}.")
-    for thread in answered:
+        return 0
+    print(f"Review threads: {len(blocked)} blocking on PR #{args.pr}.")
+    for thread in blocked:
         print(describe(thread))
-    return 1 if blocked else 0
+    print(FIX)
+    return 1

@@ -7,8 +7,8 @@ import pytest
 from devtool.review_threads import QueryError, gh_graphql, main
 
 FIX = (
-    "  Resolve each hard finding and each person's thread before the PR merges. A judgement "
-    "finding from the reviewer needs a reply saying why it was taken or left.\n"
+    "  Resolve every thread before the PR merges. Reply to a judgement finding saying whether it "
+    "was taken or left, then resolve it.\n"
 )
 
 
@@ -76,71 +76,19 @@ def test_a_review_with_an_unresolved_thread_fails_listing_each_one_and_the_fix(c
     assert query.calls == [{"owner": "o", "name": "r", "number": 12, "after": None}]
 
 
-def test_a_reviewer_judgement_thread_blocks_until_someone_replies_with_why(capsys):
+def test_an_answered_judgement_thread_blocks_until_it_is_resolved(capsys):
     judgement = "[Spec] judgement: maybe guard the branch"
-    query = pages([thread("w.yml", 12, "claude", judgement, url="https://x/12")])
-
-    code = run(query)
-
-    assert code == 1
-    assert capsys.readouterr().out == (
-        "Review threads: 1 blocking on PR #12.\n"
-        "  w.yml:12  claude: [Spec] judgement: maybe guard the branch  https://x/12\n" + FIX
-    )
-
-
-def test_an_answered_reviewer_judgement_thread_is_left_open_without_blocking(capsys):
-    judgement = "[Standards] judgement — a smell"
     answered = thread(
         "w.yml", 3, "claude", judgement, url="https://x/3", replies=[("onato", "Leaving it: …")]
     )
 
     code = run(pages([answered]))
 
-    assert code == 0
-    assert capsys.readouterr().out == (
-        "Review threads: none blocking on PR #12. Judgement findings answered and left open:\n"
-        "  w.yml:3  claude: [Standards] judgement — a smell  https://x/3\n"
-    )
-
-
-def test_answered_judgements_are_listed_when_another_thread_blocks(capsys):
-    answered = thread(
-        "w.yml", 3, "claude", "[Spec] judgement: x", url="https://x/3", replies=[("onato", "Took")]
-    )
-    person = thread("w.yml", 8, "onato", "Why?", url="https://x/8")
-
-    code = run(pages([answered, person]))
-
     assert code == 1
     assert capsys.readouterr().out == (
         "Review threads: 1 blocking on PR #12.\n"
-        "  w.yml:8  onato: Why?  https://x/8\n"
-        + FIX
-        + "Judgement findings answered and left open:\n"
-        "  w.yml:3  claude: [Spec] judgement: x  https://x/3\n"
+        "  w.yml:3  claude: [Spec] judgement: maybe guard the branch  https://x/3\n" + FIX
     )
-
-
-def test_a_reply_by_the_reviewer_itself_does_not_answer_a_judgement(capsys):
-    judgement = "[Spec] judgement: maybe"
-    query = pages([thread("w.yml", 5, "claude", judgement, replies=[("claude", "Still?")])])
-
-    assert run(query) == 1
-
-
-def test_a_user_account_named_like_the_reviewer_cannot_open_a_judgement(capsys):
-    impostor = thread("w.yml", 5, "claude", "[Spec] judgement: x", replies=[("onato", "Left")])
-    impostor["comments"]["nodes"][0]["author"] = person("claude", kind="User")
-
-    assert run(pages([impostor])) == 1
-
-
-def test_a_persons_thread_labelled_like_a_judgement_blocks_until_resolved(capsys):
-    labelled = "[Spec] judgement: please rename"
-    query = pages([thread("w.yml", 5, "onato", labelled, replies=[("someone", "Leaving it")])])
-
-    assert run(query) == 1
 
 
 def test_resolved_threads_or_none_at_all_pass(capsys):
