@@ -37,6 +37,18 @@ def approved_by(events: list[dict], label: str, approver: str | None) -> bool:
     return latest["event"] == "labeled" and latest["actor"]["login"] == approver
 
 
+# A COMMENTED review leaves the reviewer's earlier decision standing; PENDING isn't submitted.
+DECIDING = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
+
+
+def approved_by_review(reviews: list[dict], approver: str | None) -> bool:
+    """Whether the approver's latest deciding review on the PR is an approval."""
+    decisions = [
+        r["state"] for r in reviews if r["user"]["login"] == approver and r["state"] in DECIDING
+    ]
+    return bool(decisions) and decisions[-1] == "APPROVED"
+
+
 def load_patterns(text: str) -> list[str]:
     lines = (line.strip() for line in text.splitlines())
     return [line for line in lines if line and not line.startswith("#")]

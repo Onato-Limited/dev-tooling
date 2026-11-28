@@ -1,48 +1,32 @@
 import io
 import json
+from pathlib import Path
+
+import yaml
 
 from devtool.pr_size import check, main
 
 
-def label_events(tmp_path, *events):
-    path = tmp_path / "events.json"
-    path.write_text(
-        json.dumps(
-            [{"event": e, "label": {"name": n}, "actor": {"login": a}} for e, n, a in events]
-        )
-    )
+def reviews(tmp_path, *reviews):
+    path = tmp_path / "reviews.json"
+    path.write_text(json.dumps([{"user": {"login": who}, "state": st} for who, st in reviews]))
     return str(path)
 
 
-def test_over_the_limit_passes_when_the_owner_added_the_size_approved_label(tmp_path, capsys):
-    events = label_events(
-        tmp_path, ("labeled", "bug", "onato-agent[bot]"), ("labeled", "size-approved", "onato")
-    )
+def test_over_the_limit_passes_on_the_approvers_approving_review(tmp_path, capsys):
+    given = reviews(tmp_path, ("someone", "COMMENTED"), ("onato", "APPROVED"))
     numstat = io.StringIO("424\t0\tsrc/a.kt\n")
 
-    code = main(["--approver", "onato", "--label-events", events], stdin=numstat)
+    code = main(["--approver", "onato", "--reviews", given], stdin=numstat)
 
     assert code == 0
-    out = capsys.readouterr().out
-    assert "424 changed lines, limit 400: approved by onato (size-approved)" in out
+    assert "424 changed lines, limit 400: approved by onato's review" in capsys.readouterr().out
 
 
-def test_a_size_approved_label_added_by_anyone_but_the_owner_does_not_approve(tmp_path):
-    events = label_events(tmp_path, ("labeled", "size-approved", "onato-agent[bot]"))
+def test_over_the_limit_without_an_approving_review_fails(tmp_path):
     numstat = io.StringIO("424\t0\tsrc/a.kt\n")
 
-    code = main(["--approver", "onato", "--label-events", events], stdin=numstat)
-
-    assert code == 1
-
-
-def test_a_size_approved_label_the_owner_later_removed_does_not_approve(tmp_path):
-    events = label_events(
-        tmp_path, ("labeled", "size-approved", "onato"), ("unlabeled", "size-approved", "onato")
-    )
-    numstat = io.StringIO("424\t0\tsrc/a.kt\n")
-
-    code = main(["--approver", "onato", "--label-events", events], stdin=numstat)
+    code = main(["--approver", "onato", "--reviews", reviews(tmp_path)], stdin=numstat)
 
     assert code == 1
 
@@ -153,7 +137,7 @@ def test_a_failing_check_ends_with_the_rule_and_the_fix_naming_the_approver(caps
     last = capsys.readouterr().out.splitlines()[-1]
     assert last == (
         "PRs change at most 10 lines. Split this PR into smaller ones that each merge on their "
-        "own, or ask onato to add the size-approved label."
+        "own, or ask onato to approve it as one."
     )
 
 
@@ -164,3 +148,27 @@ def test_without_an_approver_the_fix_is_only_to_split_the_pr(capsys):
     assert last == (
         "PRs change at most 10 lines. Split this PR into smaller ones that each merge on their own."
     )
+
+
+def test_pr_policy_reads_the_reviews_and_passes_them_and_the_approver_to_the_check():
+    workflow = yaml.safe_load(Path(".github/workflows/pr-policy.yml").read_text())
+    steps = {s.get("name"): s for s in workflow["jobs"]["size"]["steps"]}
+    read = " ".join(steps["Read the PR's reviews"]["run"].split())
+    count = steps["Count changed lines"]
+    command = " ".join(count["run"].split())
+
+    assert steps["Read the PR's reviews"]["env"]["PR"] == "${{ github.event.pull_request.number }}"
+    assert 'gh api --paginate "repos/$REPO/pulls/$PR/reviews"' in read
+    assert '> "$RUNNER_TEMP/reviews.json"' in read
+    assert count["env"]["APPROVER"] == "${{ inputs.approver }}"
+    assert '--reviews "$RUNNER_TEMP/reviews.json"' in command
+    assert '${APPROVER:+--approver "$APPROVER"}' in command
+
+
+def test_pr_policy_reads_the_pr_from_the_event_that_review_events_also_carry():
+    # github.base_ref and github.event.number are empty on pull_request_review, which re-runs
+    # every job when the approver reviews.
+    workflow = Path(".github/workflows/pr-policy.yml").read_text()
+
+    assert "github.base_ref" not in workflow
+    assert "github.event.number" not in workflow

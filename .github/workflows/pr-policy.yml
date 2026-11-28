@@ -7,7 +7,9 @@ on:
         type: number
         default: 400
       approver:
-        description: The only login whose `size-approved` and `review-approved` labels count
+        description: >-
+          The only login whose approving review passes an oversized PR, and whose
+          `review-approved` label passes review-paths
         type: string
         default: ""
       protected-paths:
@@ -57,23 +59,23 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .devtool
       - uses: astral-sh/setup-uv@v10.3.3
-      - name: Read the PR's label events
+      - name: Read the PR's reviews
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.number }}
+          PR: ${{ github.event.pull_request.number }}
         run: >
-          gh api --paginate "repos/$REPO/issues/$PR/events" --jq '.[]'
-          | jq -s . > "$RUNNER_TEMP/label-events.json"
+          gh api --paginate "repos/$REPO/pulls/$PR/reviews" --jq '.[]'
+          | jq -s . > "$RUNNER_TEMP/reviews.json"
       - name: Count changed lines
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           LIMIT: ${{ inputs.limit }}
           APPROVER: ${{ inputs.approver }}
         run: >
           git diff --numstat "origin/$BASE_REF...HEAD"
           | uv run --quiet --frozen --no-dev --project .devtool devtool pr-size
-          --limit "$LIMIT" --label-events "$RUNNER_TEMP/label-events.json"
+          --limit "$LIMIT" --reviews "$RUNNER_TEMP/reviews.json"
           ${APPROVER:+--approver "$APPROVER"}
   protected-paths:
     runs-on: ubuntu-latest
@@ -101,7 +103,7 @@ jobs:
       # path counts as changing it.
       - name: Check protected paths
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           PATTERNS: ${{ inputs.protected-paths }}
         run: >
           git diff --name-only --no-renames "origin/$BASE_REF...HEAD"
@@ -135,7 +137,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.number }}
+          PR: ${{ github.event.pull_request.number }}
         run: >
           gh api --paginate "repos/$REPO/issues/$PR/events" --jq '.[]'
           | jq -s . > "$RUNNER_TEMP/label-events.json"
@@ -143,7 +145,7 @@ jobs:
       # counts as changing it.
       - name: Check review paths
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           PATTERNS: ${{ inputs.review-paths }}
           APPROVER: ${{ inputs.approver }}
         run: >
@@ -203,7 +205,7 @@ jobs:
       # through env, never by ${{ }} substitution into the script.
       - name: Check the PR's title, body and diff
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
           PATTERN: ${{ inputs.concurrency-pattern }}
@@ -251,7 +253,7 @@ jobs:
       # Exit code 2 means leaks were found; any other failure is gitleaks itself failing to run.
       - name: Scan the PR's commits
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           report="$RUNNER_TEMP/gitleaks.json"
           status=0
