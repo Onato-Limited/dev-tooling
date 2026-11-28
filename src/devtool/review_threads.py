@@ -34,8 +34,7 @@ REVIEWER = "claude"
 JUDGEMENT = re.compile(r"\[[^\]]+\]\s+judgement\b", re.IGNORECASE)
 FIX = (
     "  Resolve each hard finding and each person's thread before the PR merges. A judgement "
-    "finding from the reviewer needs a reply saying why it was taken or left, and can stay open. "
-    "Resolving a thread starts no run, so re-run this job after resolving one."
+    "finding from the reviewer needs a reply saying why it was taken or left."
 )
 
 
