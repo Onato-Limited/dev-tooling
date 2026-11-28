@@ -47,7 +47,7 @@ jobs:
         with:
           fetch-depth: 0
       # The CLI and the prompt come from the same commit as this workflow, so a caller pinned at
-      # @v1 never runs a different review than the workflow it called, and a PR in the caller
+      # @v2 never runs a different review than the workflow it called, and a PR in the caller
       # cannot change its own reviewer.
       - name: Find this workflow's commit
         env:
