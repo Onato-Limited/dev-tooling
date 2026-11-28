@@ -141,10 +141,10 @@ def test_a_check_only_the_owners_approval_passes_is_not_fixed_with_commits():
 
     assert "don't try to make it pass with more commits" in prompt
     assert (
-        "When `size` fails, request {approver}'s review "
+        "When either fails, request {approver}'s review "
         "(`gh pr edit <number> --add-reviewer {approver}`)" in prompt
     )
-    assert "When `codeowners` fails, GitHub has already requested the owners' reviews" in prompt
+    assert "already requested" not in prompt
     assert "label" not in prompt.replace("plan-approved", "").lower()
 
 
@@ -181,3 +181,14 @@ def test_each_message_reaches_stdout_before_the_notify_command_runs(monkeypatch)
     notifier("notify", Path("."), lambda args, **kw: seen.append(list(out.at_flush)))("one")
 
     assert seen == [["one\n"]]
+
+
+def test_a_resumed_session_leaves_checks_that_failed_before_the_approval():
+    assert (
+        "That session doesn't re-run a `size` or `codeowners` run that failed before the "
+        "approval: the approving review starts them again." in prompt_text()
+    )
+
+
+def test_a_resumed_session_posts_its_own_retro_heading():
+    assert "a resumed session heads its comment `## Retro notes (resumed)`" in prompt_text()
