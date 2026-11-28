@@ -14,6 +14,12 @@ on:
         description: Gitignore-style patterns, one per line, for files no PR may change
         type: string
         default: ""
+      review-paths:
+        description: >-
+          Gitignore-style patterns, one per line, `!` excluding, for files a PR may change only
+          once `approver` adds the `review-approved` label
+        type: string
+        default: ""
       concurrency-pattern:
         description: A regex; added lines matching it need a `## Concurrency notes` section
         type: string
@@ -101,6 +107,50 @@ jobs:
           git diff --name-only --no-renames "origin/$BASE_REF...HEAD"
           | uv run --quiet --frozen --no-dev --project .devtool devtool protected-paths
           --patterns "$PATTERNS"
+  review-paths:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Find this workflow's commit
+        env:
+          REPOSITORY: ${{ job.workflow_repository }}
+          SHA: ${{ job.workflow_sha }}
+        run: |
+          echo "devtool from $REPOSITORY@$SHA"
+          test -n "$REPOSITORY" && test -n "$SHA"
+      - name: Check out devtool at this workflow's commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .devtool
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Read the PR's label events
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.number }}
+        run: >
+          gh api --paginate "repos/$REPO/issues/$PR/events" --jq '.[]'
+          | jq -s . > "$RUNNER_TEMP/label-events.json"
+      # --no-renames lists a moved file's old path too, so moving a file out of a review path
+      # counts as changing it.
+      - name: Check review paths
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PATTERNS: ${{ inputs.review-paths }}
+          APPROVER: ${{ inputs.approver }}
+        run: >
+          git diff --name-only --no-renames "origin/$BASE_REF...HEAD"
+          | uv run --quiet --frozen --no-dev --project .devtool devtool review-paths
+          --patterns "$PATTERNS" --label-events "$RUNNER_TEMP/label-events.json"
+          ${APPROVER:+--approver "$APPROVER"}
   required-checks:
     runs-on: ubuntu-latest
     permissions:

@@ -20,7 +20,7 @@ the PR as `<your job> / <check>` (here `policy / size`); list those names as req
 ```yaml
 on:
   pull_request:
-    # labeled/unlabeled re-run the size check when the size-approved label changes;
+    # labeled/unlabeled re-run the size and review-paths checks when their labels change;
     # edited re-runs pr-shape when the title or body is fixed.
     types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 jobs:
@@ -38,6 +38,7 @@ jobs:
 |---|---|---|
 | `size` | More than `limit` changed lines, unless `approver` added the `size-approved` label | `limit` (400), `approver`; `.github/pr-size-exclude` (gitignore-style paths not counted) |
 | `protected-paths` | Changing, moving or deleting a file that matches a pattern | `protected-paths`: gitignore-style patterns, one per line (none by default, so it passes) |
+| `review-paths` | Changing, moving or deleting a file that matches a pattern, unless `approver` added the `review-approved` label | `review-paths`: gitignore-style patterns, one per line, `!` excluding (none by default, so it passes); `approver` |
 | `required-checks` | A name in `.github/required-checks` that no job reports on a PR, or a missing file | `.github/required-checks`: one check name per line, `#` comments |
 | `secrets` | gitleaks finding a possible secret in the PR's commits (redacted; each finding with its fingerprint and the fix) | `.gitleaks.toml` (extra rules) and `.gitleaksignore` (fingerprints of false positives), read from your repo root |
 | `pr-shape` | A title that isn't a conventional commit or `Structural: …`; a body that closes no issue (`Closes #12`, or any GitHub closing keyword); added lines matching `concurrency-pattern` without a `## Concurrency notes` section | `concurrency-pattern` (a regex, none by default, so that rule is off), `concurrency-paths` (gitignore-style, one per line, default all files) |
@@ -54,6 +55,18 @@ A multi-line input is a YAML block scalar:
       protected-paths: |
         legacy/
         /config/production.yml
+```
+
+`protected-paths` is for files no PR may change; `review-paths` is for files a PR may change once
+you've looked. The last pattern that matches a file decides, and `!` excludes, so `review-paths`
+can name what needs your review, or, starting from `*`, what may merge without it:
+
+```yaml
+    with:
+      review-paths: |
+        *
+        !src/features/**
+        !tests/**
 ```
 
 ## Claude review
