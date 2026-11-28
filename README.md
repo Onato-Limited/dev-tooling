@@ -73,9 +73,9 @@ jobs:
 An oversized PR is a warning you can accept: approve the PR, as `approver`, in GitHub's review
 UI. Where `main` is protected, turn on "Dismiss stale pull request approvals when new commits are
 pushed", so a later push needs a fresh approval. GitHub doesn't let you approve your own PR, so
-an oversized PR you opened yourself is split, or merged by an admin. The same goes for a PR of
-yours that changes files you own. A merge past a red check makes the [main audit](#main-audit)
-open a `policy-violation` issue; close it with a comment saying why.
+an oversized PR you opened yourself is split, or merged by an admin. A PR of yours that changes
+files you own needs another owner's approval, or an admin's merge. A merge past a red check makes
+the [main audit](#main-audit) open a `policy-violation` issue; close it with a comment saying why.
 
 `required-checks` reads your workflows the way GitHub names checks: a job's `name:`, or its id; a
 job that calls a workflow reports `<job> / <called job>` for each called job, fetching the called
