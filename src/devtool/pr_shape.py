@@ -62,7 +62,7 @@ def header_path(header: str) -> str:
     header = header.removesuffix("\t")  # a quoted name never ends in a raw tab
     if len(header) < 2 or not (header.startswith('"') and header.endswith('"')):
         return header
-    raw, out, i = header[1:-1].encode(), bytearray(), 0
+    raw, out, i = header[1:-1].encode(errors="surrogateescape"), bytearray(), 0
     while i < len(raw):
         if raw[i] != ord("\\"):
             out.append(raw[i])
