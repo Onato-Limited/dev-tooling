@@ -30,6 +30,10 @@ v2 asks for approval with GitHub's own tools, reviews and `CODEOWNERS`, instead 
   owners stands in for a `!` pattern.
 - **The Ralph loop:** a session requests your review instead of asking for a label, and the loop
   takes the PR back when you approve it. `plan-approved` is still a label.
+- **Your own `.ralph/PROMPT.md`**, if you have one, needs the same change. When `size` fails, it
+  has the session request `{approver}`'s review and stop with `NEEDS_HUMAN: PR #<n> needs your
+  approval: …`. The loop watches only that stop, so with a v1 prompt the issue stays in In review
+  after you approve. See [Ralph loop](#ralph-loop), and the loop's own prompt for the wording.
 
 ## PR policy checks
 
