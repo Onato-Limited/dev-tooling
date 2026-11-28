@@ -23,10 +23,11 @@ v2 asks for approval with GitHub's own tools, reviews and `CODEOWNERS`, instead 
   the `labeled` and `unlabeled` types, as in the [example](#pr-policy-checks).
 - **Permissions:** the policy job needs `contents: read` and `pull-requests: read`; drop
   `issues: read`.
-- **`review-paths`** is gone. Put its patterns in `.github/CODEOWNERS` with their owners. Where
-  `main` can be protected, turn on "Require review from Code Owners"; where it can't, list
-  `policy / codeowners` in `.github/required-checks`. A `CODEOWNERS` line with no owners stands
-  in for a `!` pattern.
+- **`review-paths`** is gone. Put its patterns in `.github/CODEOWNERS` with their owners: an
+  approving review from one of a file's owners passes `codeowners`, not the `review-approved`
+  label. Where `main` can be protected, turn on "Require review from Code Owners"; where it
+  can't, list `policy / codeowners` in `.github/required-checks`. A `CODEOWNERS` line with no
+  owners stands in for a `!` pattern.
 - **The Ralph loop:** a session requests your review instead of asking for a label, and the loop
   takes the PR back when you approve it. `plan-approved` is still a label.
 
