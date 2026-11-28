@@ -2,7 +2,14 @@ from fnmatch import fnmatchcase
 
 
 def matches_any(path: str, patterns: list[str]) -> bool:
-    return any(_matches(path, pattern) for pattern in patterns)
+    """Whether the path matches, by gitignore rules: the last pattern that matches decides, and a
+    `!` pattern excludes."""
+    matched = False
+    for pattern in patterns:
+        negated = pattern.startswith("!")
+        if _matches(path, pattern[1:] if negated else pattern):
+            matched = not negated
+    return matched
 
 
 def _matches(path: str, pattern: str) -> bool:
