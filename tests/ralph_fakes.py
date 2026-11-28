@@ -24,6 +24,8 @@ class FakeGitHub:
         self.plan_asked = 0
         self.audit_failed = None  # the URL of main's latest audit run, if it is red
         self.violations = []  # open policy-violation issues
+        self.labelled = set()  # (PR, label) pairs the owner has added
+        self.label_asks = []
 
     def board_workflows(self):
         return self.workflows
@@ -62,6 +64,10 @@ class FakeGitHub:
         assert parent == 2
         self.plan_asked += 1
         return self.approved
+
+    def label_approved(self, pr, label):
+        self.label_asks.append((pr, label))
+        return (pr, label) in self.labelled
 
     def undraft(self, issue):
         self.undrafted.append(issue)

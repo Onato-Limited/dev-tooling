@@ -301,10 +301,13 @@ class GitHubAdapter:
         return self.run(args, f"{AGENT_MARKER}\n\n{body}").strip()
 
     def plan_approved(self, parent: int) -> bool:
+        return self.label_approved(parent, PLAN_APPROVED)
+
+    def label_approved(self, number: int, label: str) -> bool:
         """Only the login running the loop approves: a bot or a collaborator adding it doesn't."""
-        path = f"repos/{self._repo()}/issues/{parent}/events"
+        path = f"repos/{self._repo()}/issues/{number}/events"
         lines = self.run(["api", "--paginate", path, "--jq", ".[]"], None).splitlines()
-        return approved_by([json.loads(line) for line in lines], PLAN_APPROVED, self.approver)
+        return approved_by([json.loads(line) for line in lines], label, self.approver)
 
     def undraft(self, issue: int) -> None:
         self.run(["issue", "edit", str(issue), "-R", self._repo(), "--remove-label", DRAFT], None)

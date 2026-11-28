@@ -40,7 +40,7 @@ What to do:
    with more commits. Instead, post a PR comment headed `## Needs your approval`, naming the check,
    the label, and why the PR needs it, so the owner can decide from it. Keep this out of the PR
    body: it becomes the commit on `main`. Then stop with NEEDS_HUMAN. Once the owner adds the
-   label, they move the issue back to Todo, and a resumed session finishes the PR.
+   label, the loop moves the issue back to Todo, and a resumed session finishes the PR.
 7. Before you finish, post a PR comment headed `## Retro notes` with a few lines: what slowed you
    down, what the review caught, what you had to guess, and any check or doc that would have
    prevented it.
