@@ -151,3 +151,12 @@ def test_the_approval_request_is_a_pr_comment_not_the_pr_body():
 
 def test_needs_human_for_an_approval_names_the_pr_and_the_label():
     assert "`NEEDS_HUMAN: PR #<number> needs <label>: <one-line reason>`" in prompt_text()
+
+
+def test_the_prompt_says_the_loop_takes_the_pr_back_once_the_label_is_added():
+    prompt = prompt_text()
+
+    assert (
+        "Once the owner adds the label, the loop takes the PR back and arranges its merge" in prompt
+    )
+    assert "move the issue back to Todo" not in prompt

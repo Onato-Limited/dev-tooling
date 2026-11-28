@@ -925,3 +925,78 @@ def test_a_device_pruned_on_a_later_pass_is_not_listed_as_left_running():
     stop = loop(github, session, devices=devices)
 
     assert (devices.pruned, "Devices left running" in stop) == ([7], False)
+
+
+def approval_stop(pr, label="review-approved"):
+    reason = f"PR #{pr} needs {label}: it changes db/migrations"
+    return Outcome(pr=pr, needs_human=reason), PullRequest(number=pr), True
+
+
+def test_a_pr_stopped_for_an_approval_label_is_waited_on_for_the_label(capsys):
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: approval_stop(12)})
+
+    stop = loop(github, session)
+
+    assert github.moves == [(7, IN_PROGRESS), (7, IN_REVIEW)]
+    assert github.arranged == []
+    assert (12, "review-approved") in github.label_asks
+    assert stop.startswith(
+        "Ralph loop stopped: still waiting after 60 minutes: PR #12 for your review-approved label."
+    )
+
+
+def test_once_the_owner_adds_the_label_the_loop_takes_the_pr_back_and_merges_it():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: approval_stop(12, "size-approved")})
+    clock = Clock()
+
+    def owner_adds_the_label():
+        if (12, "size-approved") not in github.labelled:
+            github.labelled.add((12, "size-approved"))
+        elif 12 in github.arranged:
+            github.merge(7, 12)
+
+    clock.on_sleep = owner_adds_the_label
+
+    stop = loop(github, session, clock=clock)
+
+    assert github.arranged == [12]
+    assert github.moves[:3] == [(7, IN_PROGRESS), (7, IN_REVIEW), (7, IN_PROGRESS)]
+    assert (
+        7,
+        "Taken back by the Ralph loop: size-approved was added to PR #12.",
+    ) in github.comments
+    assert stop.startswith("Ralph loop stopped: milestone complete.")
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["pick a licence", "PR #12 needs plan-approved: x", "PR #13 needs review-approved: x"],
+    ids=["another kind of stop", "not an approval label", "another PR"],
+)
+def test_any_other_needs_human_stop_leaves_the_pr_with_the_owner(reason):
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(
+        github, {7: (Outcome(pr=12, needs_human=reason), PullRequest(number=12), True)}
+    )
+    clock = Clock()
+
+    stop = loop(github, session, clock=clock)
+
+    assert github.label_asks == []
+    assert clock.sleeps == []
+    assert stop.startswith("Ralph loop stopped: nothing left to take.")
+
+
+def test_waiting_on_a_merge_and_a_label_at_once_names_both_when_it_times_out():
+    github = FakeGitHub([Issue(7, TODO), Issue(8, TODO)])
+    pending = (Outcome(pr=40), PullRequest(number=40), True)
+    session = FakeSession(github, {7: pending, 8: approval_stop(12)})
+
+    stop = loop(github, session)
+
+    assert stop.startswith(
+        "Ralph loop stopped: still waiting after 60 minutes: PR #40 to merge, "
+        "PR #12 for your review-approved label."
+    )

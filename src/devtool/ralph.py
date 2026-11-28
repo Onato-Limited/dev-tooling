@@ -1,5 +1,6 @@
 """Ralph loop: works through a milestone's issues, one fresh session per issue."""
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Protocol
@@ -11,6 +12,9 @@ STUCK_AFTER = 3
 IMPROVE_AFTER = 5  # merged PRs between improver passes
 POLL_SECONDS = 60
 MERGE_TIMEOUT = 3600
+APPROVAL_LABELS = ("size-approved", "review-approved")
+# The shape the session prompt gives a stop that waits on one of the owner's approval labels.
+APPROVAL_STOP = re.compile(rf"PR #(\d+) needs ({'|'.join(APPROVAL_LABELS)}):")
 # The board only stays true while these GitHub Projects built-in workflows move the cards.
 REQUIRED_WORKFLOWS = (
     "Item closed",
@@ -75,6 +79,7 @@ class GitHub(ReadsBoard, Protocol):
     def set_status(self, issue: int, status: str) -> None: ...
     def comment(self, issue: int, body: str) -> str: ...  # the comment's URL
     def plan_approved(self, parent: int) -> bool: ...  # the owner added plan-approved last
+    def label_approved(self, pr: int, label: str) -> bool: ...  # the owner added it last
     def undraft(self, issue: int) -> None: ...
     def arrange_merge(self, pr: int) -> None: ...  # per the project's merge mode
     def failed_audit(self) -> str | None: ...  # main's latest audit run's URL, if it is red
@@ -195,6 +200,7 @@ class _Loop:
     opened: list[int] = field(default_factory=list)
     # This run's open PRs → each one's issue, or None for a session's other PRs.
     pending: dict[int, int | None] = field(default_factory=dict)
+    awaiting: dict[int, tuple[int, str]] = field(default_factory=dict)  # PR → its issue, label
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
     left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
@@ -290,6 +296,7 @@ class _Loop:
         return None
 
     def refresh_pending(self) -> None:
+        self.take_back_approved()
         prs = [self.github.pull_request(n) for n in self.pending]
         for pr in prs:
             if not pr.merged:
@@ -300,6 +307,19 @@ class _Loop:
                 self.remove_worktree(issue)
         self.update_behind(prs)
         self.drop_held(prs)
+
+    def take_back_approved(self) -> None:
+        """A PR handed to the owner for an approval label is the loop's again once it has it."""
+        for pr, (issue, label) in list(self.awaiting.items()):
+            if not self.github.label_approved(pr, label):
+                continue
+            del self.awaiting[pr]
+            self.stuck.pop(issue, None)
+            self.github.set_status(issue, IN_PROGRESS)
+            self.github.comment(
+                issue, f"Taken back by the Ralph loop: {label} was added to PR #{pr}."
+            )
+            self.wait_on(pr, issue)
 
     def drop_held(self, prs: list[PullRequest]) -> None:
         """Stop waiting for a green PR an unresolved review thread blocks: it never merges."""
@@ -380,13 +400,19 @@ class _Loop:
 
     def wait_for_merges(self, stop: Stop) -> Stop | None:
         """`stop` once this run's PRs have merged; until then wait, as one may unblock an issue."""
-        if not self.pending:
+        if not self.pending and not self.awaiting:
             return stop
         if self.waiting_since is None:
             self.waiting_since = self.clock()
         if self.clock() - self.waiting_since >= MERGE_TIMEOUT:
-            prs = ", ".join(f"PR #{n}" for n in self.pending)
-            return Stop(f"auto-merge still pending after {MERGE_TIMEOUT // 60} minutes: {prs}")
+            minutes = MERGE_TIMEOUT // 60
+            if not self.awaiting:
+                prs = ", ".join(f"PR #{n}" for n in self.pending)
+                return Stop(f"auto-merge still pending after {minutes} minutes: {prs}")
+            waits = [f"PR #{n} to merge" for n in self.pending] + [
+                f"PR #{n} for your {label} label" for n, (_, label) in self.awaiting.items()
+            ]
+            return Stop(f"still waiting after {minutes} minutes: {', '.join(waits)}")
         self.sleep(POLL_SECONDS)
         return None
 
@@ -401,6 +427,7 @@ class _Loop:
         self.opened += outcome.also
         if reason := stuck_reason(outcome, pr):
             self.needs_owner(issue.number, reason)  # its PRs, and any others, are the owner's
+            self.await_approval(issue.number, outcome)
             return
         merged_others = []
         for other in outcome.also:
@@ -414,6 +441,12 @@ class _Loop:
         else:
             self.wait_on(pr.number, issue.number)
         self.merged += merged_others
+
+    def await_approval(self, issue: int, outcome: Outcome) -> None:
+        """A stop asking for an approval label on the session's own PR: the loop watches for it."""
+        stop = APPROVAL_STOP.match(outcome.needs_human or "")
+        if stop and int(stop[1]) == outcome.pr:
+            self.awaiting[outcome.pr] = (issue, stop[2])
 
     def stop_message(self, headline: str | None) -> str:
         still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
