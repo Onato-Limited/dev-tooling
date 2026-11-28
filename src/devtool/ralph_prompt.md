@@ -42,8 +42,8 @@ What to do:
    approval`, naming the check and why the PR needs it, so the owner can decide from it. Keep this
    out of the PR body: it becomes the commit on `main`. Then stop with NEEDS_HUMAN. Once
    {approver} approves the PR, the loop moves the issue back to Todo, and a resumed session
-   finishes the PR. That session doesn't re-run checks that failed before the approval: the
-   approving review starts their runs again.
+   finishes the PR. That session doesn't re-run a `size` or `codeowners` run that failed before
+   the approval: the approving review starts them again.
 7. Before you finish, post a PR comment headed `## Retro notes` with a few lines: what slowed you
    down, what the review caught, what you had to guess, and any check or doc that would have
    prevented it. If an earlier session already posted one, a resumed session heads its comment

@@ -185,8 +185,8 @@ def test_each_message_reaches_stdout_before_the_notify_command_runs(monkeypatch)
 
 def test_a_resumed_session_leaves_checks_that_failed_before_the_approval():
     assert (
-        "That session doesn't re-run checks that failed before the approval: the approving review "
-        "starts their runs again" in prompt_text()
+        "That session doesn't re-run a `size` or `codeowners` run that failed before the "
+        "approval: the approving review starts them again." in prompt_text()
     )
 
 

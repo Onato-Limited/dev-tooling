@@ -304,10 +304,10 @@ stops, an improver session reviews them if the project has `.ralph/IMPROVE.md`.
 A session whose PR can only pass `size` or `codeowners` on your approval requests your review,
 says why in a PR comment headed `## Needs your approval`, and stops with `NEEDS_HUMAN: PR #<n>
 needs your approval: …`. It requests the review for `codeowners` too, since GitHub requests code
-owners' reviews on private repos only on paid plans. The loop watches that PR while it runs. Once you approve it in GitHub's review UI, the loop moves the
-issue back to Todo, and a resumed session finishes the PR, which may still need work. If the
-loop has stopped before you approve, its stop message lists the PR; move the issue back to Todo
-yourself.
+owners' reviews on private repos only on paid plans. The loop watches that PR while it runs. Once
+you approve it in GitHub's review UI, the loop moves the issue back to Todo, and a resumed session
+finishes the PR, which may still need work. If the loop has stopped before you approve, its stop
+message lists the PR; move the issue back to Todo yourself.
 
 The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
 PRs still haven't merged, or haven't been approved, after it has waited an hour.
