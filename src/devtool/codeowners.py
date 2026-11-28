@@ -2,11 +2,12 @@
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import TextIO
 
-from devtool.gates import approved_by_review, matches_any
+from devtool.gates import approved_by_review
 
 FIX = "Ask one of each file's owners to approve the PR."
 
@@ -21,11 +22,37 @@ def rules(text: str) -> list[tuple[str, list[str]]]:
     return found
 
 
+def matcher(pattern: str) -> re.Pattern[str]:
+    """GitHub's reading of a CODEOWNERS pattern, which differs from gitignore's.
+
+    A leading or inner `/` anchors it to the root. `*` stops at `/` and `**` doesn't. A pattern
+    whose last part has no `*` names a file or a directory, and covers the directory's contents
+    with or without a trailing `/`; `docs/*` covers only files directly in `docs/`.
+    """
+    body = pattern.strip("/")
+    anchored = pattern.startswith("/") or "/" in body
+    regex = ""
+    for token in re.split(r"(\*\*/|/\*\*|\*\*|\*|\?)", body):
+        regex += {
+            "**/": "(?:.*/)?",
+            "/**": "/.*",
+            "**": ".*",
+            "*": "[^/]*",
+            "?": "[^/]",
+        }.get(token, re.escape(token))
+    last = body.rsplit("/", 1)[-1]
+    if pattern.endswith("/"):
+        regex += "/.*"
+    elif "*" not in last:
+        regex += "(?:/.*)?"
+    return re.compile(("" if anchored else "(?:.*/)?") + regex)
+
+
 def owners_of(path: str, rules: list[tuple[str, list[str]]]) -> list[str]:
     """The owners the last matching line names, as GitHub reads CODEOWNERS."""
     owners: list[str] = []
     for pattern, named in rules:
-        if matches_any(path, [pattern]):
+        if matcher(pattern).fullmatch(path):
             owners = named
     return owners
 

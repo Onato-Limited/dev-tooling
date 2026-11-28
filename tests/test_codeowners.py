@@ -3,9 +3,10 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
-from devtool.codeowners import main
+from devtool.codeowners import main, owners_of, rules
 
 
 def run(tmp_path, changed, codeowners, *reviews, author="onato-agent[bot]"):
@@ -150,3 +151,29 @@ def test_a_review_from_a_deleted_account_is_read_without_counting(tmp_path):
     )
 
     assert code == 1
+
+
+@pytest.mark.parametrize(
+    ("codeowners", "path", "owners"),
+    [
+        ("/db @a\n", "db/m.sql", ["@a"]),
+        ("src/db @a\n", "src/db/m.sql", ["@a"]),
+        ("src/db @a\n", "lib/src/db/m.sql", []),
+        ("/apps/ @a\n/apps/github @b\n", "apps/github/x.py", ["@b"]),
+        ("/apps/ @a\n/apps/github\n", "apps/github/x.py", []),
+        ("/apps/ @a\n/apps/github\n", "apps/web/x.py", ["@a"]),
+        ("**/logs @a\n", "build/logs/x.txt", ["@a"]),
+        ("logs @a\n", "build/logs/x.txt", ["@a"]),
+        ("docs/* @a\n", "docs/b.md", ["@a"]),
+        ("docs/* @a\n", "docs/sub/b.md", []),
+        ("/docs/ @a\ndocs/* @b\n", "docs/sub/b.md", ["@a"]),
+        ("*.js @a\n", "src/deep/x.js", ["@a"]),
+        ("*.js @a\n", "src/x.jsx", []),
+        ("/build/logs/ @a\n", "build/logs/x/y.log", ["@a"]),
+        ("/build/logs/ @a\n", "src/build/logs/y.log", []),
+        ("apps/**/test @a\n", "apps/web/unit/test/x.py", ["@a"]),
+        ("* @a\n", "deep/er/x.py", ["@a"]),
+    ],
+)
+def test_patterns_match_as_github_reads_codeowners(codeowners, path, owners):
+    assert owners_of(path, rules(codeowners)) == owners
