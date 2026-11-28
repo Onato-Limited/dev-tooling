@@ -426,7 +426,7 @@ class _Loop:
 
     def work(self, issue: Issue) -> None:
         self.waiting_since = None
-        # The owner may have answered a label wait another way and moved the issue back to Todo.
+        # The owner may have answered an approval wait another way and moved the issue back to Todo.
         self.awaiting = {pr: i for pr, i in self.awaiting.items() if i != issue.number}
         self.iterations += 1
         self.github.set_status(issue.number, IN_PROGRESS)
@@ -455,8 +455,11 @@ class _Loop:
     def await_approval(self, issue: int, outcome: Outcome) -> None:
         """A stop asking the owner to approve the session's own PR: the loop watches for it."""
         stop = APPROVAL_STOP.match(outcome.needs_human or "")
-        # A second stop for a PR already taken back means the loop and the check disagree.
-        if stop and int(stop[1]) == outcome.pr and outcome.pr not in self.taken_back:
+        if not stop or int(stop[1]) != outcome.pr:
+            return
+        # A stop while the approval that took it back still stands means the loop and the check
+        # disagree. Once a push has dismissed that approval, the PR needs a fresh one.
+        if outcome.pr not in self.taken_back or not self.github.approved(outcome.pr):
             self.awaiting[outcome.pr] = issue
 
     def stop_message(self, headline: str | None) -> str:

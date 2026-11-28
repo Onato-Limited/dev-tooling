@@ -286,7 +286,8 @@ approval: …`. For `size` it requests your review; for `codeowners`, GitHub alr
 watches that PR while it runs. Once you approve it in GitHub's review UI, the loop moves the
 issue back to Todo, and a resumed session finishes the PR, which may still need work. If the
 loop has stopped before you approve, its stop message lists the PR; move the issue back to Todo
-yourself.
+yourself. Approving by review is v2, not yet released: on `@v1` the loop still waits for the
+`size-approved` or `review-approved` label.
 
 The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
 PRs still haven't merged, or haven't been approved, after it has waited an hour.

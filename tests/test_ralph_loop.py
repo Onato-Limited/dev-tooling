@@ -1060,3 +1060,29 @@ def test_a_second_stop_for_an_approval_already_taken_back_stays_with_the_owner()
         (7, IN_REVIEW),
     ]
     assert stop.startswith("Ralph loop stopped: nothing left to take.")
+
+
+def test_a_second_stop_after_a_push_dismissed_the_approval_is_watched_again():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: approval_stop(12)})
+    clock = Clock()
+    taken_back = github.set_status
+
+    def owner_approves():
+        if github.issues[7].status == IN_REVIEW:
+            github.reviewed.add(12)
+
+    def resumed_session_pushes(issue, status):
+        taken_back(issue, status)
+        if status == TODO:
+            github.reviewed.discard(12)  # its push dismisses the stale approval
+            if github.moves.count((7, TODO)) == 2:
+                session.runs[7] = merged_run(12)
+
+    clock.on_sleep = owner_approves
+    github.set_status = resumed_session_pushes
+
+    stop = loop(github, session, clock=clock)
+
+    assert github.moves.count((7, TODO)) == 2
+    assert stop.startswith("Ralph loop stopped: milestone complete.")
