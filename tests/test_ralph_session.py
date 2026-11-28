@@ -108,6 +108,7 @@ def session(tmp_path, processes):
         tokens=FakeTokens(),
         session_path=None,
         update_hook=None,
+        approver="the-owner",
         run=processes,
         start=processes.start,
         environ={"PATH": "/usr/bin"},
@@ -621,3 +622,4 @@ def test_without_a_project_prompt_the_default_one_is_filled_in(tmp_path):
     assert "issue #7." in prompt
     assert "branch `someone/7-ralph`" in prompt
     assert "{issue}" not in prompt and "{branch}" not in prompt
+    assert "--add-reviewer the-owner" in prompt and "{approver}" not in prompt

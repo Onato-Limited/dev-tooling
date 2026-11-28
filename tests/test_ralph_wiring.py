@@ -134,27 +134,29 @@ def prompt_text():
     return " ".join(files("devtool").joinpath("ralph_prompt.md").read_text().split())
 
 
-def test_a_check_only_the_owners_label_passes_is_not_fixed_with_commits():
+def test_a_check_only_the_owners_approval_passes_is_not_fixed_with_commits():
     prompt = prompt_text()
 
-    assert "`size` (`size-approved`) or `review-paths` (`review-approved`)" in prompt
     assert "don't try to make it pass with more commits" in prompt
+    assert (
+        "When `size` fails, request {approver}'s review "
+        "(`gh pr edit <number> --add-reviewer {approver}`)" in prompt
+    )
+    assert "When `codeowners` fails, GitHub has already requested the owners' reviews" in prompt
+    assert "label" not in prompt.replace("plan-approved", "").lower()
 
 
 def test_the_approval_request_is_a_pr_comment_not_the_pr_body():
     prompt = prompt_text()
 
     assert "post a PR comment headed `## Needs your approval`" in prompt
-    assert "naming the check, the label, and why" in prompt
+    assert "naming the check and why the PR needs it" in prompt
+    assert "`NEEDS_HUMAN: PR #<number> needs your approval: <one-line reason>`" in prompt
     assert "say why in its body" not in prompt
 
 
-def test_needs_human_for_an_approval_names_the_pr_and_the_label():
-    assert "`NEEDS_HUMAN: PR #<number> needs <label>: <one-line reason>`" in prompt_text()
-
-
-def test_the_prompt_says_the_loop_resumes_the_issue_once_the_label_is_added():
+def test_the_prompt_says_the_loop_resumes_the_issue_once_the_pr_is_approved():
     assert (
-        "Once the owner adds the label, the loop moves the issue back to Todo, and a resumed "
+        "Once {approver} approves the PR, the loop moves the issue back to Todo, and a resumed "
         "session finishes the PR." in prompt_text()
     )

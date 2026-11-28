@@ -53,7 +53,7 @@ def assemble(
     tokens: SessionTokens,
 ) -> Parts:
     """The loop's parts for the project checked out at `repo`; `gh` is the owner's login."""
-    prefix = branch_prefix(run, repo)
+    prefix, login = branch_prefix(run, repo), approver(gh)
     name = gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], None)
     github = GitHubAdapter(
         name.strip(),
@@ -62,7 +62,7 @@ def assemble(
         config.review_check,
         gh,
         branch_prefix=prefix,
-        approver=approver(gh),
+        approver=login,
         merge_mode=config.merge_mode,
         audit_check=config.audit_check,
     )
@@ -76,6 +76,7 @@ def assemble(
         tokens=tokens,
         session_path=session_path,
         update_hook=config.update_hook,
+        approver=login,
         run=run,
         start=start,
         environ=environ,

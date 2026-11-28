@@ -55,6 +55,7 @@ def test_the_adapter_and_session_are_built_from_the_config_and_what_github_says(
         Bot("some-app", 123), "scripts/after-merge", tmp_path
     ]  # fmt: skip
     assert github.branch_prefix == session.branch_prefix == "someone"
+    assert github.approver == session.approver == "The-Owner"
 
 
 def test_the_check_before_the_loop_mints_a_token(tmp_path):

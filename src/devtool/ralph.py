@@ -12,9 +12,8 @@ STUCK_AFTER = 3
 IMPROVE_AFTER = 5  # merged PRs between improver passes
 POLL_SECONDS = 60
 MERGE_TIMEOUT = 3600
-APPROVAL_LABELS = ("size-approved", "review-approved")
-# The shape the session prompt gives a stop that waits on one of the owner's approval labels.
-APPROVAL_STOP = re.compile(rf"PR #(\d+) needs ({'|'.join(APPROVAL_LABELS)}):")
+# The shape the session prompt gives a stop that waits on the owner's approving review.
+APPROVAL_STOP = re.compile(r"PR #(\d+) needs your approval:")
 # The board only stays true while these GitHub Projects built-in workflows move the cards.
 REQUIRED_WORKFLOWS = (
     "Item closed",
@@ -79,7 +78,7 @@ class GitHub(ReadsBoard, Protocol):
     def set_status(self, issue: int, status: str) -> None: ...
     def comment(self, issue: int, body: str) -> str: ...  # the comment's URL
     def plan_approved(self, parent: int) -> bool: ...  # the owner added plan-approved last
-    def label_approved(self, pr: int, label: str) -> bool: ...  # the owner added it last
+    def approved(self, pr: int) -> bool: ...  # the owner's latest deciding review approves
     def undraft(self, issue: int) -> None: ...
     def arrange_merge(self, pr: int) -> None: ...  # per the project's merge mode
     def failed_audit(self) -> str | None: ...  # main's latest audit run's URL, if it is red
@@ -200,9 +199,9 @@ class _Loop:
     opened: list[int] = field(default_factory=list)
     # This run's open PRs → each one's issue, or None for a session's other PRs.
     pending: dict[int, int | None] = field(default_factory=dict)
-    awaiting: dict[int, tuple[int, str]] = field(default_factory=dict)  # PR → its issue, label
-    unlabelled: list[str] = field(default_factory=list)  # label waits that ran out
-    taken_back: set[tuple[int, str]] = field(default_factory=set)  # (PR, label), once each
+    awaiting: dict[int, int] = field(default_factory=dict)  # PR → its issue, until approved
+    unapproved: list[int] = field(default_factory=list)  # PRs whose approval wait ran out
+    taken_back: set[int] = field(default_factory=set)  # PRs, once each
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
     left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
@@ -312,21 +311,21 @@ class _Loop:
         self.drop_held(prs)
 
     def take_back_approved(self) -> bool:
-        """An issue whose PR got the approval label it stopped for goes back to Todo, so a resumed
-        session finishes the PR: it may still need work once the label's check passes."""
+        """An issue whose PR got the approval it stopped for goes back to Todo, so a resumed
+        session finishes the PR: it may still need work once the approval's check passes."""
         taken = False
-        for pr, (issue, label) in list(self.awaiting.items()):
+        for pr, issue in list(self.awaiting.items()):
             if not self.github.is_open(issue):  # merged or closed by the owner meanwhile
                 del self.awaiting[pr]
                 continue
-            if not self.github.label_approved(pr, label):
+            if not self.github.approved(pr):
                 continue
             del self.awaiting[pr]
-            self.taken_back.add((pr, label))
+            self.taken_back.add(pr)
             self.stuck.pop(issue, None)
             self.github.set_status(issue, TODO)
             self.github.comment(
-                issue, f"Moved back to Todo by the Ralph loop: {label} was added to PR #{pr}."
+                issue, f"Moved back to Todo by the Ralph loop: PR #{pr} was approved."
             )
             taken = True
         return taken
@@ -415,8 +414,8 @@ class _Loop:
         if self.waiting_since is None:
             self.waiting_since = self.clock()
         if self.clock() - self.waiting_since >= MERGE_TIMEOUT:
-            # A label wait that runs out leaves the PR with the owner, as before it was watched.
-            self.unlabelled += [f"PR #{n} ({label})" for n, (_, label) in self.awaiting.items()]
+            # An approval wait that runs out leaves the PR with the owner, as before it was watched.
+            self.unapproved += list(self.awaiting)
             self.awaiting.clear()
             if not self.pending:
                 return stop
@@ -427,8 +426,8 @@ class _Loop:
 
     def work(self, issue: Issue) -> None:
         self.waiting_since = None
-        # The owner may have answered a label wait another way and moved the issue back to Todo.
-        self.awaiting = {pr: wait for pr, wait in self.awaiting.items() if wait[0] != issue.number}
+        # The owner may have answered an approval wait another way and moved the issue back to Todo.
+        self.awaiting = {pr: i for pr, i in self.awaiting.items() if i != issue.number}
         self.iterations += 1
         self.github.set_status(issue.number, IN_PROGRESS)
         outcome = self.session.work(issue, self.update_behind_pending)
@@ -454,11 +453,14 @@ class _Loop:
         self.merged += merged_others
 
     def await_approval(self, issue: int, outcome: Outcome) -> None:
-        """A stop asking for an approval label on the session's own PR: the loop watches for it."""
+        """A stop asking the owner to approve the session's own PR: the loop watches for it."""
         stop = APPROVAL_STOP.match(outcome.needs_human or "")
-        # A second stop for a label already taken back means the loop and the check disagree.
-        if stop and int(stop[1]) == outcome.pr and (outcome.pr, stop[2]) not in self.taken_back:
-            self.awaiting[outcome.pr] = (issue, stop[2])
+        if not stop or int(stop[1]) != outcome.pr:
+            return
+        # A stop while the approval that took it back still stands means the loop and the check
+        # disagree. Once a push has dismissed that approval, the PR needs a fresh one.
+        if outcome.pr not in self.taken_back or not self.github.approved(outcome.pr):
+            self.awaiting[outcome.pr] = issue
 
     def stop_message(self, headline: str | None) -> str:
         still_open = [i for i in self.github.milestone_issues(self.milestone) if i.is_open]
@@ -496,10 +498,11 @@ class _Loop:
             lines += ["Not brought up to date:", *(f"- {r}" for r in self.not_brought_up_to_date)]
         if self.held_by_threads:
             lines += ["Held by review threads:", *(f"- {r}" for r in self.held_by_threads)]
-        if self.unlabelled:
+        if self.unapproved:
+            prs = ", ".join(f"PR #{n}" for n in self.unapproved)
             lines.append(
-                "Still without your approval label: " + ", ".join(self.unlabelled) + ". Once "
-                "you add it, move the issue back to Todo."
+                f"Still without your approval: {prs}. Once you approve it, move the issue back to "
+                "Todo."
             )
         return "\n".join(lines + self.improver_lines())
 

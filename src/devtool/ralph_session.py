@@ -85,6 +85,7 @@ class ClaudeSession:
     tokens: SessionTokens
     session_path: str | None
     update_hook: str | None
+    approver: str
     run: Callable[..., subprocess.CompletedProcess]
     start: Callable[..., subprocess.Popen]
     environ: dict[str, str]
@@ -97,7 +98,12 @@ class ClaudeSession:
             return Outcome(pr=None, needs_human=failed)
         own = self.repo / ".ralph" / "PROMPT.md"
         prompt = (own if own.exists() else files("devtool").joinpath("ralph_prompt.md")).read_text()
-        prompt = prompt.replace("{issue}", str(issue.number)).replace("{branch}", branch)
+        for name, value in (
+            ("issue", str(issue.number)),
+            ("branch", branch),
+            ("approver", self.approver),
+        ):
+            prompt = prompt.replace("{" + name + "}", value)
         if resuming:
             note, failed = self._resuming(branch)
             if failed:

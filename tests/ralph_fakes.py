@@ -19,13 +19,13 @@ class FakeGitHub:
         self.updates = []  # PRs brought up to date with main, in order
         self.pr_fails = []  # errors the next PR reads raise, one each
         self.arranged = []  # PRs whose merge the loop arranged, in order
-        self.approved = False  # the owner's plan-approved label on the milestone's parent
+        self.plan_is_approved = False  # the owner's plan-approved label on the milestone's parent
         self.undrafted = []
         self.plan_asked = 0
         self.audit_failed = None  # the URL of main's latest audit run, if it is red
         self.violations = []  # open policy-violation issues
-        self.labelled = set()  # (PR, label) pairs the owner has added
-        self.label_asks = []
+        self.reviewed = set()  # PRs the owner has approved by review
+        self.review_asks = []
 
     def board_workflows(self):
         return self.workflows
@@ -63,11 +63,11 @@ class FakeGitHub:
     def plan_approved(self, parent):
         assert parent == 2
         self.plan_asked += 1
-        return self.approved
+        return self.plan_is_approved
 
-    def label_approved(self, pr, label):
-        self.label_asks.append((pr, label))
-        return (pr, label) in self.labelled
+    def approved(self, pr):
+        self.review_asks.append(pr)
+        return pr in self.reviewed
 
     def undraft(self, issue):
         self.undrafted.append(issue)

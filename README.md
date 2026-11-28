@@ -280,14 +280,17 @@ brought up to date with `main` (a conflict, or `update_hook` failed), or is gree
 unresolved review thread. After 5 merged PRs, and before it
 stops, an improver session reviews them if the project has `.ralph/IMPROVE.md`.
 
-A session whose PR needs your `size-approved` or `review-approved` label asks for it in a PR
-comment headed `## Needs your approval`, and stops with `NEEDS_HUMAN: PR #<n> needs <label>: …`.
-The loop watches that PR while it runs. Once you add the label, it moves the issue back to Todo,
-and a resumed session finishes the PR, which may still need work. If the loop has stopped
-before you add the label, its stop message lists the PR; move the issue back to Todo yourself.
+A session whose PR can only pass `size` or `codeowners` on your approval says why in a PR
+comment headed `## Needs your approval`, and stops with `NEEDS_HUMAN: PR #<n> needs your
+approval: …`. For `size` it requests your review; for `codeowners`, GitHub already has. The loop
+watches that PR while it runs. Once you approve it in GitHub's review UI, the loop moves the
+issue back to Todo, and a resumed session finishes the PR, which may still need work. If the
+loop has stopped before you approve, its stop message lists the PR; move the issue back to Todo
+yourself. Approving by review is v2, not yet released: on `@v1` the loop still waits for the
+`size-approved` or `review-approved` label.
 
 The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
-PRs still haven't merged, or haven't got the label they wait for, after it has waited an hour.
+PRs still haven't merged, or haven't been approved, after it has waited an hour.
 It won't start while `main`'s latest `audit_check` run is red or a `policy-violation` issue is
 open (see [Main audit](#main-audit)); that stop reads `Ralph loop stopped: NEEDS_HUMAN: …`.
 
@@ -298,8 +301,8 @@ stop starts `Ralph loop stopped:` or `Ralph loop can't`.
 ### What it runs as
 
 - **You**, through `gh`: reading and moving the board, labels and comments. A GitHub App can't
-  move cards on a user-owned project. Your login is the only one whose `plan-approved`,
-  `size-approved` or `review-approved` counts for the loop.
+  move cards on a user-owned project. Your login is the only one whose `plan-approved` label or
+  approving review counts for the loop.
 - **The project's GitHub App**, in each session: commits, pushes and PRs, authored as
   `<app_slug>[bot]`. The bot's user ID, for its commit email, isn't configured: each run, a dry
   run included, looks it up with `gh api users/<app_slug>[bot]`, so a wrong `app_slug` stops the
@@ -346,7 +349,8 @@ of the value.
 
 ### Prompts
 
-`.ralph/PROMPT.md` is what each session is told, with `{issue}` and `{branch}` filled in.
+`.ralph/PROMPT.md` is what each session is told, with `{issue}`, `{branch}` and `{approver}`
+(your login) filled in.
 Without one the loop uses its own, which reads the project's `CLAUDE.md`. Either way the
 session's last message must end with a `PR: #<number>` line once it has a PR, and a
 `NEEDS_HUMAN: <reason>` line when it stops for you.
