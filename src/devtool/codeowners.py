@@ -27,8 +27,8 @@ def matcher(pattern: str) -> re.Pattern[str]:
     """GitHub's reading of a CODEOWNERS pattern, which differs from gitignore's.
 
     A leading or inner `/` anchors it to the root. `*` stops at `/` and `**` doesn't. A pattern
-    whose last part has no `*` names a file or a directory, and covers the directory's contents
-    with or without a trailing `/`; `docs/*` covers only files directly in `docs/`.
+    names a file or a directory, and covers the directory's contents with or without a trailing
+    `/`, except that `docs/*` covers only files directly in `docs/`.
     """
     body = pattern.strip("/")
     anchored = pattern.startswith("/") or "/" in body
@@ -45,7 +45,7 @@ def matcher(pattern: str) -> re.Pattern[str]:
     last = body.rsplit("/", 1)[-1]
     if pattern.endswith("/"):
         regex += "/.*"
-    elif "*" not in last:
+    elif last != "*":
         regex += "(?:/.*)?"
     return re.compile(("" if anchored else "(?:.*/)?") + regex)
 
