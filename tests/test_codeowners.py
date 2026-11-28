@@ -172,6 +172,10 @@ def test_a_review_from_a_deleted_account_is_read_without_counting(tmp_path):
         ("/build/logs/ @a\n", "build/logs/x/y.log", ["@a"]),
         ("/build/logs/ @a\n", "src/build/logs/y.log", []),
         ("apps/**/test @a\n", "apps/web/unit/test/x.py", ["@a"]),
+        ("apps/**/test @a\n", "apps/test/x.py", ["@a"]),
+        ("docs/**/*.md @a\n", "docs/a.md", ["@a"]),
+        ("/src/**/migrations/ @a\n", "src/migrations/001.sql", ["@a"]),
+        ("/my\\ docs/ @a\n", "my docs/x.md", ["@a"]),
         ("* @a\n", "deep/er/x.py", ["@a"]),
     ],
 )

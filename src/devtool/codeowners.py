@@ -16,9 +16,10 @@ def rules(text: str) -> list[tuple[str, list[str]]]:
     """Each line's pattern and owners, in file order; a line may name no owners."""
     found = []
     for line in text.splitlines():
-        words = line.split("#", 1)[0].split()
-        if words:
-            found.append((words[0], words[1:]))
+        # A space in a path is written `\ `, so split only at unescaped whitespace.
+        words = re.split(r"(?<!\\)\s+", line.split("#", 1)[0].strip())
+        if words != [""]:
+            found.append((words[0].replace("\\ ", " "), words[1:]))
     return found
 
 
@@ -32,8 +33,9 @@ def matcher(pattern: str) -> re.Pattern[str]:
     body = pattern.strip("/")
     anchored = pattern.startswith("/") or "/" in body
     regex = ""
-    for token in re.split(r"(\*\*/|/\*\*|\*\*|\*|\?)", body):
+    for token in re.split(r"(/\*\*/|\*\*/|/\*\*|\*\*|\*|\?)", body):
         regex += {
+            "/**/": "/(?:.*/)?",
             "**/": "(?:.*/)?",
             "/**": "/.*",
             "**": ".*",
