@@ -27,14 +27,20 @@ What to do:
 4. Keep the PR to the project's size limit. If the issue won't fit, split it: make each part a
    sub-issue of the issue's parent, with its own tests to write first, and set `Blocked by`
    between them. Then cut this issue down to the first part and carry on with it; the loop takes
-   the rest later. Only when the work can't be divided, open the PR anyway, say why in its body,
-   and stop with NEEDS_HUMAN.
+   the rest later. Only when the work can't be divided, open the PR anyway and ask for approval
+   as below.
 5. Push, and open the PR with a body that says `Closes #{issue}`. The loop arranges its merge:
    don't merge it yourself, and never push to `main`.
 6. Wait for CI and the review (`gh pr checks <n> --watch`). Fix what they report with new commits,
    never force pushes. After three failed rounds of either, stop.
    For each inline finding you fix, reply on its thread saying what changed and where, then
    resolve it. If you disagree with a finding, leave its thread open and stop with NEEDS_HUMAN.
+   Two checks pass only on the owner's label: `size` (`size-approved`) or `review-paths`
+   (`review-approved`). When one fails and the change can't avoid it, don't try to make it pass
+   with more commits. Instead, post a PR comment headed `## Needs your approval`, naming the check,
+   the label, and why the PR needs it, so the owner can decide from it. Keep this out of the PR
+   body: it becomes the commit on `main`. Then stop with NEEDS_HUMAN. Once the owner adds the
+   label, they move the issue back to Todo, and a resumed session finishes the PR.
 7. Before you finish, post a PR comment headed `## Retro notes` with a few lines: what slowed you
    down, what the review caught, what you had to guess, and any check or doc that would have
    prevented it.
@@ -44,4 +50,5 @@ Your final message is read by the loop. End it with these lines, exactly:
   each after the issue's own, so the loop keeps them up to date with `main` and waits for them to
   merge.
 - `NEEDS_HUMAN: <one-line reason>` when you stopped because something needs the owner: a decision
-  the issue doesn't make, a failing check you can't fix, missing access, or a PR that won't fit.
+  the issue doesn't make, a failing check you can't fix, or missing access. For an approval, it's
+  `NEEDS_HUMAN: PR #<number> needs <label>: <one-line reason>`.
