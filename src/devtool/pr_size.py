@@ -7,9 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from devtool.gates import approved_by, load_patterns, matches_any
-
-APPROVAL_LABEL = "size-approved"
+from devtool.gates import approved_by_review, load_patterns, matches_any
 
 
 @dataclass
@@ -37,30 +35,36 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
     )
     parser.add_argument("--limit", type=int, default=400)
     parser.add_argument("--exclude-file", type=Path, default=Path(".github/pr-size-exclude"))
-    parser.add_argument("--approver", help="the only login whose size-approved label counts")
-    parser.add_argument("--label-events", type=Path, help="the PR's issue events, as JSON")
+    parser.add_argument("--approver", help="the only login whose approving review counts")
+    parser.add_argument("--reviews", type=Path, help="the PR's reviews, as JSON")
+    parser.add_argument("--author", help="the PR's author, who can't approve their own PR")
     args = parser.parse_args(argv)
 
     excludes = load_patterns(args.exclude_file.read_text()) if args.exclude_file.exists() else []
     result = check(stdin.read(), excludes=excludes, limit=args.limit)
-    events = json.loads(args.label_events.read_text()) if args.label_events else []
-    approved = not result.passed and approved_by(events, APPROVAL_LABEL, args.approver)
+    reviews = json.loads(args.reviews.read_text()) if args.reviews else []
+    approved = not result.passed and approved_by_review(reviews, args.approver)
 
-    approval = f": approved by {args.approver} ({APPROVAL_LABEL})" if approved else ""
+    approval = f": approved by {args.approver}'s review" if approved else ""
     print(f"{result.total} changed lines, limit {args.limit}{approval}")
     for path, size in result.largest[:10]:
         print(f"  {size:6d}  {path}")
     if result.passed or approved:
         return 0
-    print(fix(args.limit, args.approver))
+    print(fix(args.limit, args.approver, args.author))
     return 1
 
 
-def fix(limit: int, approver: str | None) -> str:
+def fix(limit: int, approver: str | None, author: str | None = None) -> str:
     split = (
         f"PRs change at most {limit} lines. "
         "Split this PR into smaller ones that each merge on their own"
     )
     if approver is None:
         return split + "."
-    return f"{split}, or ask {approver} to add the {APPROVAL_LABEL} label."
+    if approver == author:
+        return (
+            f"{split}. GitHub doesn't let {approver} approve their own PR, so to keep it as one, "
+            "an admin merges it."
+        )
+    return f"{split}, or ask {approver} to approve it as one."
