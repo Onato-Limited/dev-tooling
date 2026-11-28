@@ -165,8 +165,8 @@ def test_size_counts_a_renamed_file_once_under_its_new_path(tmp_path, capsys):
 
 def test_pr_shape_limits_the_concurrency_rule_to_paths_git_quotes(tmp_path, capsys):
     repo = scratch_repo(tmp_path, *AWKWARD)
-    (tmp_path / "body.md").write_text("Closes #1\n")
     diff = changed_by("Check the PR's title, body and diff", repo)
+    (tmp_path / "body.md").write_text("Closes #1\n")
     argv = ["--title", "fix: x", "--body-file", str(tmp_path / "body.md")]
     argv += ["--concurrency-pattern", "Mutex", "--concurrency-paths", "/db/*.sql"]
 
@@ -175,6 +175,7 @@ def test_pr_shape_limits_the_concurrency_rule_to_paths_git_quotes(tmp_path, caps
     out = capsys.readouterr().out
     assert code == 1
     assert all(f"  db/{name}:1: Mutex lock;" in out for name in AWKWARD)
+    assert "Body:" not in out
 
 
 @pytest.mark.parametrize(
@@ -184,3 +185,14 @@ def test_pr_shape_limits_the_concurrency_rule_to_paths_git_quotes(tmp_path, caps
 )
 def test_text_that_isnt_valid_c_quoting_is_left_as_written(text):
     assert header_path(text) == text
+
+
+def test_an_added_crlf_line_matches_a_pattern_anchored_at_its_end(tmp_path, capsys):
+    (tmp_path / "body.md").write_text("Closes #1\n")
+    diff = "+++ b/src/a.py\r\n@@ -0,0 +1 @@\r\n+foo lock()\r\n"
+    argv = ["--title", "fix: x", "--body-file", str(tmp_path / "body.md")]
+    argv += ["--concurrency-pattern", r"lock\(\)$"]
+
+    code = pr_shape.main(argv, stdin=io.StringIO(diff, newline=""))
+
+    assert (code, "  src/a.py:1: foo lock()" in capsys.readouterr().out) == (1, True)

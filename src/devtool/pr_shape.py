@@ -81,7 +81,10 @@ def header_path(header: str) -> str:
 def added_lines(diff: str):
     """(path, line number, text) for each added line of a `git diff -U0`."""
     path, number = None, 0
-    for line in diff.split("\n"):  # splitlines() would also break a name at U+2028 and the like
+    # Not splitlines(), which would also break a name at U+2028. A raw \r can only end a CRLF
+    # line: git escapes one in a name.
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("+++ "):
             path = header_path(line[4:]).removeprefix("b/")
         elif hunk := HUNK.match(line):
