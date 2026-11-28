@@ -5,9 +5,11 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 from devtool import codeowners, pr_shape, pr_size, protected_paths
+from devtool.pr_shape import header_path
 
 WORKFLOW = Path(".github/workflows/pr-policy.yml").resolve()
 
@@ -34,7 +36,7 @@ def test_every_path_listing_in_pr_policy_is_nul_separated():
 def changed_by(step: str, repo: Path) -> str:
     """The changed files as the step's own git command lists them, in `repo`."""
     command = steps()[step].split("|")[0]
-    env = {**os.environ, "BASE_REF": "main"}
+    env = {**os.environ, "BASE_REF": "main", "RUNNER_TEMP": str(repo.parent)}
     done = subprocess.run(
         ["bash", "-c", command], cwd=repo, env=env, check=True, capture_output=True, text=True
     )
@@ -85,7 +87,16 @@ def test_protected_paths_sees_a_non_ascii_path_as_written(tmp_path, capsys):
     assert re.search(r"db/é\.sql", capsys.readouterr().out)
 
 
-AWKWARD = ('a"b.sql', "a\\b.sql", "a\tb.sql", "a b.sql", "a\x01b.sql", "é b.sql")
+AWKWARD = (
+    'a"b.sql',
+    "a\\b.sql",
+    "a\tb.sql",
+    "a b.sql",
+    "a\x01b.sql",
+    "é b.sql",
+    'a"b c.sql',
+    "a\u2028b.sql",
+)
 
 
 def test_codeowners_sees_paths_git_quotes_as_written(tmp_path, capsys):
@@ -164,3 +175,12 @@ def test_pr_shape_limits_the_concurrency_rule_to_paths_git_quotes(tmp_path, caps
     out = capsys.readouterr().out
     assert code == 1
     assert all(f"  db/{name}:1: Mutex lock;" in out for name in AWKWARD)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ['"\\x"', '"a\\"', '"unclosed', '"\\9"'],
+    ids=["unknown escape", "trailing backslash", "unclosed", "not octal"],
+)
+def test_text_that_isnt_valid_c_quoting_is_left_as_written(text):
+    assert header_path(text) == text

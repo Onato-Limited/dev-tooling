@@ -56,28 +56,32 @@ ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, 
 
 
 def header_path(header: str) -> str:
-    """The path a patch's `+++` header names, as written. Git C-quotes a path with a quote, a
-    backslash or a control character in it, and adds a tab after one with a space in it."""
-    if not header.startswith('"'):
-        return header.removesuffix("\t")
+    """The path a patch's `+++` header names, as written. Git adds a tab after a name with a
+    space in it, and C-quotes one with a quote, a backslash or a control character in it. Text
+    that isn't valid C-quoting is left as it is."""
+    header = header.removesuffix("\t")  # a quoted name never ends in a raw tab
+    if len(header) < 2 or not (header.startswith('"') and header.endswith('"')):
+        return header
     raw, out, i = header[1:-1].encode(), bytearray(), 0
     while i < len(raw):
         if raw[i] != ord("\\"):
             out.append(raw[i])
             i += 1
-        elif chr(raw[i + 1]) in "01234567":
+        elif re.fullmatch(rb"[0-3][0-7]{2}", raw[i + 1 : i + 4]):
             out.append(int(raw[i + 1 : i + 4], 8))
             i += 4
-        else:
-            out.append(ESCAPES[chr(raw[i + 1])])
+        elif (escape := ESCAPES.get(chr(raw[i + 1]) if i + 1 < len(raw) else "")) is not None:
+            out.append(escape)
             i += 2
+        else:
+            return header
     return out.decode(errors="surrogateescape")
 
 
 def added_lines(diff: str):
     """(path, line number, text) for each added line of a `git diff -U0`."""
     path, number = None, 0
-    for line in diff.splitlines():
+    for line in diff.split("\n"):  # splitlines() would also break a name at U+2028 and the like
         if line.startswith("+++ "):
             path = header_path(line[4:]).removeprefix("b/")
         elif hunk := HUNK.match(line):
