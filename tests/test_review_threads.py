@@ -8,8 +8,7 @@ from devtool.review_threads import QueryError, gh_graphql, main
 
 FIX = (
     "  Resolve each hard finding and each person's thread before the PR merges. A judgement "
-    "finding from the reviewer needs a reply saying why it was taken or left, and can stay open. "
-    "Resolving a thread starts no run, so re-run this job after resolving one.\n"
+    "finding from the reviewer needs a reply saying why it was taken or left.\n"
 )
 
 
