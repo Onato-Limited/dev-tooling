@@ -134,8 +134,13 @@ jobs:
       pull-requests: read
 ```
 
-A push, a review or a reply re-runs it. Resolving a thread starts no run, so after resolving the
-last one, re-run the failed job.
+A push, a review or a reply re-runs it, but resolving a thread starts no run. Where `main` can be
+protected, don't make this a required check. A run that failed while a thread was open would keep
+blocking the merge after the thread is resolved, until someone re-runs it. Turn on "Require
+conversation resolution before merging" instead. GitHub reads the threads as the PR merges, so
+every thread must be resolved first, an answered judgement finding included. The check still
+runs, and its log lists what is left. Where `main` can't be protected, merge-when-green reads
+the threads itself when it merges.
 
 ## Merge when green
 
