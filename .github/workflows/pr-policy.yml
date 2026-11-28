@@ -7,7 +7,7 @@ on:
         type: number
         default: 400
       approver:
-        description: The only login whose `size-approved` label lets an oversized PR pass
+        description: The only login whose `size-approved` and `review-approved` labels count
         type: string
         default: ""
       protected-paths:

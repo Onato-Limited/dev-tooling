@@ -19,7 +19,9 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
         help="gitignore-style patterns, one per line; `!` excludes, `#` starts a comment",
     )
     parser.add_argument("--approver", help=f"the only login whose {APPROVAL_LABEL} label counts")
-    parser.add_argument("--label-events", type=Path, help="the PR's issue events, as JSON")
+    parser.add_argument(
+        "--label-events", type=Path, required=True, help="the PR's issue events, as JSON"
+    )
     args = parser.parse_args(argv)
 
     patterns = load_patterns(args.patterns)
@@ -27,7 +29,7 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
     if not touched:
         print("No review paths changed.")
         return 0
-    events = json.loads(args.label_events.read_text()) if args.label_events else []
+    events = json.loads(args.label_events.read_text())
     approved = approved_by(events, APPROVAL_LABEL, args.approver)
     approval = f", approved by {args.approver} ({APPROVAL_LABEL})" if approved else ""
     print(f"Changed under review paths{approval}:")
