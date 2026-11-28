@@ -20,10 +20,9 @@ the PR as `<your job> / <check>` (here `policy / size`); list those names as req
 ```yaml
 on:
   pull_request:
-    # labeled/unlabeled re-run review-paths when its label changes; edited re-runs pr-shape
-    # when the title or body is fixed.
-    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
-  # A review re-runs size, which an approving review from `approver` passes.
+    # edited re-runs pr-shape when the title or body is fixed.
+    types: [opened, synchronize, reopened, edited]
+  # A review re-runs size and codeowners, which approving reviews pass.
   pull_request_review:
     types: [submitted, dismissed]
 jobs:
@@ -41,7 +40,7 @@ jobs:
 |---|---|---|
 | `size` | More than `limit` changed lines, unless `approver`'s latest review approves the PR | `limit` (400), `approver`; `.github/pr-size-exclude` (gitignore-style paths not counted) |
 | `protected-paths` | Changing, moving or deleting a file that matches a pattern | `protected-paths`: gitignore-style patterns, one per line (none by default, so it passes) |
-| `review-paths` | Changing, moving or deleting a file that matches a pattern, unless `approver` added the `review-approved` label | `review-paths`: gitignore-style patterns, one per line, `!` excluding (none by default, so it passes); `approver` |
+| `codeowners` | Changing, moving or deleting a file that `CODEOWNERS` gives owners, until one of its owners approves the PR | `.github/CODEOWNERS`, `CODEOWNERS` or `docs/CODEOWNERS`, read from the base branch (none, so it passes) |
 | `required-checks` | A name in `.github/required-checks` that no job reports on a PR, or a missing file | `.github/required-checks`: one check name per line, `#` comments |
 | `secrets` | gitleaks finding a possible secret in the PR's commits (redacted; each finding with its fingerprint and the fix) | `.gitleaks.toml` (extra rules) and `.gitleaksignore` (fingerprints of false positives), read from your repo root |
 | `pr-shape` | A title that isn't a conventional commit or `Structural: …`; a body that closes no issue (`Closes #12`, or any GitHub closing keyword); added lines matching `concurrency-pattern` without a `## Concurrency notes` section | `concurrency-pattern` (a regex, none by default, so that rule is off), `concurrency-paths` (gitignore-style, one per line, default all files) |
@@ -68,17 +67,22 @@ A multi-line input is a YAML block scalar:
         /config/production.yml
 ```
 
-`protected-paths` is for files no PR may change; `review-paths` is for files a PR may change once
-you've looked. The last pattern that matches a file decides, and `!` excludes, so `review-paths`
-can name what needs your review, or, starting from `*`, what may merge without it:
+`protected-paths` is for files no PR may change. For files a PR may change once someone has
+looked, use GitHub's `CODEOWNERS`, which also requests the owners' reviews. The last line that
+matches a file decides its owners, and a line with no owners leaves its files unowned. So
+`CODEOWNERS` can name what needs a review, or, starting from `*`, what may merge without one:
 
-```yaml
-    with:
-      review-paths: |
-        *
-        !src/features/**
-        !tests/**
 ```
+* @you
+/src/features/
+/tests/
+```
+
+Where `main` can be protected, turn on "Require review from Code Owners" and you needn't require
+`policy / codeowners`. Where it can't, list `policy / codeowners` in `.github/required-checks`.
+The check counts an approving review from any one of a file's owners, as GitHub does. It reads
+`CODEOWNERS` from the base branch, so a PR can't drop its own owners. It can't tell who is in a
+team or behind an email, so it fails on files only those own.
 
 ## Claude review
 

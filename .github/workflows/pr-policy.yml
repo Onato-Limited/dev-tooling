@@ -7,19 +7,11 @@ on:
         type: number
         default: 400
       approver:
-        description: >-
-          The only login whose approving review passes an oversized PR, and whose
-          `review-approved` label passes review-paths
+        description: The only login whose approving review passes an oversized PR
         type: string
         default: ""
       protected-paths:
         description: Gitignore-style patterns, one per line, for files no PR may change
-        type: string
-        default: ""
-      review-paths:
-        description: >-
-          Gitignore-style patterns, one per line, `!` excluding, for files a PR may change only
-          once `approver` adds the `review-approved` label
         type: string
         default: ""
       concurrency-pattern:
@@ -109,11 +101,10 @@ jobs:
           git diff --name-only --no-renames "origin/$BASE_REF...HEAD"
           | uv run --quiet --frozen --no-dev --project .devtool devtool protected-paths
           --patterns "$PATTERNS"
-  review-paths:
+  codeowners:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
@@ -133,26 +124,36 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .devtool
       - uses: astral-sh/setup-uv@v10.3.3
-      - name: Read the PR's label events
+      - name: Read the PR's reviews
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: >
-          gh api --paginate "repos/$REPO/issues/$PR/events" --jq '.[]'
-          | jq -s . > "$RUNNER_TEMP/label-events.json"
-      # --no-renames lists a moved file's old path too, so moving a file out of a review path
-      # counts as changing it.
-      - name: Check review paths
+          gh api --paginate "repos/$REPO/pulls/$PR/reviews" --jq '.[]'
+          | jq -s . > "$RUNNER_TEMP/reviews.json"
+      # From the base branch, so a PR can't drop its own owners. GitHub reads the first of these.
+      - name: Read CODEOWNERS from the base branch
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PATTERNS: ${{ inputs.review-paths }}
-          APPROVER: ${{ inputs.approver }}
+        run: |
+          for path in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+            if git show "origin/$BASE_REF:$path" > "$RUNNER_TEMP/CODEOWNERS" 2>/dev/null; then
+              echo "CODEOWNERS from $path on $BASE_REF"
+              exit 0
+            fi
+          done
+          rm -f "$RUNNER_TEMP/CODEOWNERS"
+      # --no-renames lists a moved file's old path too, so moving an owned file counts.
+      - name: Check code owners' approvals
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: >
           git diff --name-only --no-renames "origin/$BASE_REF...HEAD"
-          | uv run --quiet --frozen --no-dev --project .devtool devtool review-paths
-          --patterns "$PATTERNS" --label-events "$RUNNER_TEMP/label-events.json"
-          ${APPROVER:+--approver "$APPROVER"}
+          | uv run --quiet --frozen --no-dev --project .devtool devtool codeowners
+          --codeowners "$RUNNER_TEMP/CODEOWNERS" --reviews "$RUNNER_TEMP/reviews.json"
+          --author "$AUTHOR"
   required-checks:
     runs-on: ubuntu-latest
     permissions:

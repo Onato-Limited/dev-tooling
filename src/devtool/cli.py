@@ -3,6 +3,7 @@ import sys
 from importlib.metadata import version
 
 from devtool import (
+    codeowners,
     main_audit,
     merge_when_green,
     pr_shape,
@@ -11,7 +12,6 @@ from devtool import (
     ralph_command,
     required_checks,
     review_comment,
-    review_paths,
     review_prompt,
     review_threads,
     review_verdict,
@@ -22,7 +22,7 @@ COMMANDS = {
     "pr-size": pr_size,
     "pr-shape": pr_shape,
     "protected-paths": protected_paths,
-    "review-paths": review_paths,
+    "codeowners": codeowners,
     "required-checks": required_checks,
     "secrets-report": secrets_report,
     "review-verdict": review_verdict,
