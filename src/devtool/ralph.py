@@ -201,6 +201,7 @@ class _Loop:
     # This run's open PRs → each one's issue, or None for a session's other PRs.
     pending: dict[int, int | None] = field(default_factory=dict)
     awaiting: dict[int, tuple[int, str]] = field(default_factory=dict)  # PR → its issue, label
+    unlabelled: list[str] = field(default_factory=list)  # label waits that ran out
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
     left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
@@ -262,6 +263,8 @@ class _Loop:
                 self.github.set_status(draft.number, TODO)
 
     def step(self, issue: Issue | None) -> Stop | None:
+        if self.take_back_approved():
+            return None  # the issue is Todo again; the next pass reads the board afresh
         self.refresh_pending()
         halt = None if issue is None else self.halt()
         if issue is None or halt:
@@ -296,7 +299,6 @@ class _Loop:
         return None
 
     def refresh_pending(self) -> None:
-        self.take_back_approved()
         prs = [self.github.pull_request(n) for n in self.pending]
         for pr in prs:
             if not pr.merged:
@@ -308,18 +310,21 @@ class _Loop:
         self.update_behind(prs)
         self.drop_held(prs)
 
-    def take_back_approved(self) -> None:
-        """A PR handed to the owner for an approval label is the loop's again once it has it."""
+    def take_back_approved(self) -> bool:
+        """An issue whose PR got the approval label it stopped for goes back to Todo, so a resumed
+        session finishes the PR: it may still need work once the label's check passes."""
+        taken = False
         for pr, (issue, label) in list(self.awaiting.items()):
             if not self.github.label_approved(pr, label):
                 continue
             del self.awaiting[pr]
             self.stuck.pop(issue, None)
-            self.github.set_status(issue, IN_PROGRESS)
+            self.github.set_status(issue, TODO)
             self.github.comment(
-                issue, f"Taken back by the Ralph loop: {label} was added to PR #{pr}."
+                issue, f"Moved back to Todo by the Ralph loop: {label} was added to PR #{pr}."
             )
-            self.wait_on(pr, issue)
+            taken = True
+        return taken
 
     def drop_held(self, prs: list[PullRequest]) -> None:
         """Stop waiting for a green PR an unresolved review thread blocks: it never merges."""
@@ -405,14 +410,13 @@ class _Loop:
         if self.waiting_since is None:
             self.waiting_since = self.clock()
         if self.clock() - self.waiting_since >= MERGE_TIMEOUT:
-            minutes = MERGE_TIMEOUT // 60
-            if not self.awaiting:
-                prs = ", ".join(f"PR #{n}" for n in self.pending)
-                return Stop(f"auto-merge still pending after {minutes} minutes: {prs}")
-            waits = [f"PR #{n} to merge" for n in self.pending] + [
-                f"PR #{n} for your {label} label" for n, (_, label) in self.awaiting.items()
-            ]
-            return Stop(f"still waiting after {minutes} minutes: {', '.join(waits)}")
+            # A label wait that runs out leaves the PR with the owner, as before it was watched.
+            self.unlabelled += [f"PR #{n} ({label})" for n, (_, label) in self.awaiting.items()]
+            self.awaiting.clear()
+            if not self.pending:
+                return stop
+            prs = ", ".join(f"PR #{n}" for n in self.pending)
+            return Stop(f"auto-merge still pending after {MERGE_TIMEOUT // 60} minutes: {prs}")
         self.sleep(POLL_SECONDS)
         return None
 
@@ -484,6 +488,11 @@ class _Loop:
             lines += ["Not brought up to date:", *(f"- {r}" for r in self.not_brought_up_to_date)]
         if self.held_by_threads:
             lines += ["Held by review threads:", *(f"- {r}" for r in self.held_by_threads)]
+        if self.unlabelled:
+            lines.append(
+                "Still without your approval label: " + ", ".join(self.unlabelled) + ". Once "
+                "you add it, move the issue back to Todo."
+            )
         return "\n".join(lines + self.improver_lines())
 
     def improver_lines(self) -> list[str]:

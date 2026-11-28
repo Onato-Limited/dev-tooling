@@ -267,13 +267,14 @@ stops, an improver session reviews them if the project has `.ralph/IMPROVE.md`.
 
 A session whose PR needs your `size-approved` or `review-approved` label asks for it in a PR
 comment headed `## Needs your approval`, and stops with `NEEDS_HUMAN: PR #<n> needs <label>: …`.
-The loop watches that PR. Once you add the label, it moves the issue back to In progress,
-arranges the merge and waits for it, so you don't move the card yourself.
+The loop watches that PR while it runs. Once you add the label, it moves the issue back to Todo,
+and a resumed session finishes the PR, which may still need work. If the loop has stopped
+before you add the label, its stop message lists the PR; move the issue back to Todo yourself.
 
 The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
-PRs still haven't merged, or haven't got the label they wait for, after it has waited an hour. It won't start while `main`'s
-latest `audit_check` run is red or a `policy-violation` issue is open (see
-[Main audit](#main-audit)); that stop reads `Ralph loop stopped: NEEDS_HUMAN: …`.
+PRs still haven't merged, or haven't got the label they wait for, after it has waited an hour.
+It won't start while `main`'s latest `audit_check` run is red or a `policy-violation` issue is
+open (see [Main audit](#main-audit)); that stop reads `Ralph loop stopped: NEEDS_HUMAN: …`.
 
 Every message to you starts `Ralph loop`. A `notify` command that should only page for what
 needs you can match `needs you`, `NEEDS_HUMAN:`, `needs your decision` and `can't start`; every
