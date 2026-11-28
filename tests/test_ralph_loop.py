@@ -956,14 +956,18 @@ def test_once_the_owner_adds_the_label_the_issue_goes_back_to_todo_for_a_resumed
     clock = Clock()
 
     def owner_adds_the_label():
-        github.labelled.add((12, "size-approved"))
-        session.runs[7] = merged_run(12)  # the resumed session finishes the PR
+        if (12, "size-approved") not in github.labelled:
+            github.labelled.add((12, "size-approved"))
+            session.runs[7] = pending_run(12)  # the resumed session finishes; the PR waits
+        elif 12 in github.arranged:
+            github.merge(7, 12)
 
     clock.on_sleep = owner_adds_the_label
 
     stop = loop(github, session, clock=clock)
 
     assert session.worked == [7, 7]
+    assert github.arranged == [12]
     assert github.moves == [(7, IN_PROGRESS), (7, IN_REVIEW), (7, TODO), (7, IN_PROGRESS)]
     assert (7, "Moved back to Todo by the Ralph loop: size-approved was added to PR #12.") in (
         github.comments
@@ -998,3 +1002,59 @@ def test_a_label_wait_that_runs_out_still_lets_the_improver_review_what_merged()
 
     assert session.improved == [((40,), 2)]
     assert "Still without your approval label: PR #12 (review-approved)." in stop
+
+
+def test_an_issue_worked_again_without_the_label_stops_its_label_wait():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: approval_stop(12, "size-approved")})
+    clock = Clock()
+
+    def owner_answers_and_moves_it_to_todo():
+        if github.issues[7].status == IN_REVIEW:
+            github.set_status(7, TODO)
+            session.runs[7] = merged_run(12)  # split down to size instead
+
+    clock.on_sleep = owner_answers_and_moves_it_to_todo
+
+    stop = loop(github, session, clock=clock)
+
+    assert session.worked == [7, 7]
+    assert clock.sleeps == [60]
+    assert "Still without your approval label" not in stop
+
+
+def test_a_closed_issue_is_not_taken_back_when_its_label_goes_on():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: approval_stop(12)})
+    clock = Clock()
+
+    def owner_approves_and_merges_it_themselves():
+        github.labelled.add((12, "review-approved"))
+        github.merge(7, 12)
+
+    clock.on_sleep = owner_approves_and_merges_it_themselves
+
+    stop = loop(github, session, clock=clock)
+
+    assert (7, TODO) not in github.moves
+    assert not [body for _, body in github.comments if body.startswith("Moved back to Todo")]
+    assert stop.startswith("Ralph loop stopped: milestone complete.")
+
+
+def test_a_second_stop_for_a_label_already_taken_back_stays_with_the_owner():
+    github = FakeGitHub([Issue(7, TODO)])
+    session = FakeSession(github, {7: approval_stop(12)})
+    clock = Clock()
+    clock.on_sleep = lambda: github.labelled.add((12, "review-approved"))
+
+    stop = loop(github, session, clock=clock)
+
+    assert session.worked == [7, 7]
+    assert github.moves == [
+        (7, IN_PROGRESS),
+        (7, IN_REVIEW),
+        (7, TODO),
+        (7, IN_PROGRESS),
+        (7, IN_REVIEW),
+    ]
+    assert stop.startswith("Ralph loop stopped: nothing left to take.")
