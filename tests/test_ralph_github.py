@@ -660,18 +660,23 @@ def test_policy_violations_are_the_open_issues_with_the_label():
     ]
 
 
+def reviews(*reviews):
+    return "".join(json.dumps({"user": {"login": who}, "state": st}) + "\n" for who, st in reviews)
+
+
 @pytest.mark.parametrize(
     ("reply", "approved"),
     [
-        (events(("labeled", "review-approved", "the-owner")), True),
-        (events(("labeled", "review-approved", "some-app[bot]")), False),
-        (events(("labeled", "size-approved", "the-owner")), False),
+        (reviews(("the-owner", "APPROVED")), True),
+        (reviews(("some-app[bot]", "APPROVED")), False),
+        (reviews(("the-owner", "APPROVED"), ("the-owner", "CHANGES_REQUESTED")), False),
+        ("", False),
     ],
-    ids=["the loop's login added it", "someone else added it", "another label"],
+    ids=["the loop's login approved", "another login approved", "changes requested since", "none"],
 )
-def test_a_pr_has_an_approval_label_only_once_the_loops_login_added_it_last(reply, approved):
+def test_a_pr_is_approved_only_by_the_loops_logins_latest_deciding_review(reply, approved):
     gh = FakeGh(reply)
 
-    assert adapter(gh).label_approved(12, "review-approved") is approved
+    assert adapter(gh).approved(12) is approved
     args, _ = gh.calls[0]
-    assert args == ["api", "--paginate", "repos/owner/repo/issues/12/events", "--jq", ".[]"]
+    assert args == ["api", "--paginate", "repos/owner/repo/pulls/12/reviews", "--jq", ".[]"]

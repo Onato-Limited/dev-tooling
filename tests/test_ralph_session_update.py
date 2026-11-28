@@ -56,6 +56,7 @@ def repos(tmp_path, update_hook=None):
         tokens=FakeTokens(),
         session_path=None,
         update_hook=update_hook,
+        approver="the-owner",
         run=subprocess.run,
         start=subprocess.Popen,
         environ={"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "GIT_CONFIG_NOSYSTEM": "1"},

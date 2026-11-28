@@ -35,12 +35,14 @@ What to do:
    never force pushes. After three failed rounds of either, stop.
    For each inline finding you fix, reply on its thread saying what changed and where, then
    resolve it. If you disagree with a finding, leave its thread open and stop with NEEDS_HUMAN.
-   Two checks pass only on the owner's label: `size` (`size-approved`) or `review-paths`
-   (`review-approved`). When one fails and the change can't avoid it, don't try to make it pass
-   with more commits. Instead, post a PR comment headed `## Needs your approval`, naming the check,
-   the label, and why the PR needs it, so the owner can decide from it. Keep this out of the PR
-   body: it becomes the commit on `main`. Then stop with NEEDS_HUMAN. Once the owner adds the
-   label, the loop moves the issue back to Todo, and a resumed session finishes the PR.
+   Two checks pass only on a person's approving review: `size` and `codeowners`. When one fails
+   and the change can't avoid it, don't try to make it pass with more commits. When `size` fails,
+   request {approver}'s review (`gh pr edit <number> --add-reviewer {approver}`). When
+   `codeowners` fails, GitHub has already requested the owners' reviews. Either way, post a PR
+   comment headed `## Needs your approval`, naming the check and why the PR needs it, so the owner
+   can decide from it. Keep this out of the PR body: it becomes the commit on `main`. Then stop
+   with NEEDS_HUMAN. Once {approver} approves the PR, the loop moves the issue back to Todo, and a
+   resumed session finishes the PR.
 7. Before you finish, post a PR comment headed `## Retro notes` with a few lines: what slowed you
    down, what the review caught, what you had to guess, and any check or doc that would have
    prevented it.
@@ -51,4 +53,4 @@ Your final message is read by the loop. End it with these lines, exactly:
   merge.
 - `NEEDS_HUMAN: <one-line reason>` when you stopped because something needs the owner: a decision
   the issue doesn't make, a failing check you can't fix, or missing access. For an approval, it's
-  `NEEDS_HUMAN: PR #<number> needs <label>: <one-line reason>`.
+  `NEEDS_HUMAN: PR #<number> needs your approval: <one-line reason>`.
