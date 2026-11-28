@@ -27,7 +27,10 @@ v2 asks for approval with GitHub's own tools, reviews and `CODEOWNERS`, instead 
   approving review from one of a file's owners passes `codeowners`, not the `review-approved`
   label. Where `main` can be protected, turn on "Require review from Code Owners"; where it
   can't, list `policy / codeowners` in `.github/required-checks`. A `CODEOWNERS` line with no
-  owners stands in for a `!` pattern.
+  owners stands in for a `!` pattern. If `.github/required-checks` lists `policy / review-paths`,
+  remove it in a PR of its own while still on `@v1`, then move the caller to `@v2`. Otherwise
+  merge-when-green waits for that check forever, and the [main audit](#main-audit), which reads
+  the list as it was before the push, flags the merge that moves you.
 - **The Ralph loop:** a session requests your review instead of asking for a label, and the loop
   takes the PR back when you approve it. `plan-approved` is still a label.
 - **Your own `.ralph/PROMPT.md`**, if you have one, needs the same change. When `size` fails, it
@@ -70,7 +73,9 @@ jobs:
 An oversized PR is a warning you can accept: approve the PR, as `approver`, in GitHub's review
 UI. Where `main` is protected, turn on "Dismiss stale pull request approvals when new commits are
 pushed", so a later push needs a fresh approval. GitHub doesn't let you approve your own PR, so
-an oversized PR you opened yourself is split, or merged by an admin.
+an oversized PR you opened yourself is split, or merged by an admin. A PR of yours that changes
+files you own needs another owner's approval, or an admin's merge. A merge past a red check makes
+the [main audit](#main-audit) open a `policy-violation` issue; close it with a comment saying why.
 
 `required-checks` reads your workflows the way GitHub names checks: a job's `name:`, or its id; a
 job that calls a workflow reports `<job> / <called job>` for each called job, fetching the called
@@ -154,7 +159,8 @@ Before the first review:
   caller is identical to the default branch's copy, so a PR that adds or changes it gets no
   review and fails the check. Such a PR needs a person to merge it, past the failed check;
   merge-when-green never will. The same goes for a later change to the caller, such as adding
-  `allowed-bots`.
+  `allowed-bots`. That merge is past a red check, so the [main audit](#main-audit) opens a
+  `policy-violation` issue; close it with a comment saying why.
 
 Fork PRs are skipped, since they must never get the token, and a skipped job counts as passing,
 so give them a person's review instead.
