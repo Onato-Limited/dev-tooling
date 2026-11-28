@@ -141,14 +141,16 @@ has what either pass calls hard.
 | `effort` | `high` | `low`, `medium`, `high`, `xhigh` or `max` |
 | `standards` | `CODING_STANDARDS.md` | The check fails, naming the file, when the base branch has none |
 | `spec` | `SPEC.md` | Skipped when the base branch has none |
-| `allowed-bots` | none | Comma-separated bot logins whose PRs are reviewed too |
+| `allowed-bots` | none | Comma-separated bot logins whose PRs are reviewed too, usually the Ralph loop's app slug (no `[bot]`): without it, the action fails every PR a bot opens |
 
 Before the first review:
 - Install the [Claude GitHub App](https://github.com/apps/claude) on the repo, and set the
   `CLAUDE_CODE_OAUTH_TOKEN` secret (`claude setup-token` makes one).
 - Merge the calling workflow to the default branch on its own. The action runs only when the
   caller is identical to the default branch's copy, so a PR that adds or changes it gets no
-  review and fails the check.
+  review and fails the check. Such a PR needs a person to merge it, past the failed check;
+  merge-when-green never will. The same goes for a later change to the caller, such as adding
+  `allowed-bots`.
 
 Fork PRs are skipped, since they must never get the token, and a skipped job counts as passing,
 so give them a person's review instead.
@@ -327,6 +329,9 @@ stop starts `Ralph loop stopped:` or `Ralph loop can't`.
   repo, and keep its private key in your login keychain under the app's slug:
   `security add-generic-password -s <app_slug> -a private-key -w "$(cat <key>.pem)"`.
   A real run mints a token before taking an issue, so a missing key stops it at once.
+  Add `allowed-bots: <app_slug>` to your [Claude review](#claude-review) caller too: the
+  review action refuses a PR a bot opened unless that bot is listed, so every loop PR's
+  `review` check fails.
 
 Branches use the repo's git identity as their prefix: `git config github.user`, or else your
 email's name without GitHub's `NNN+`.
