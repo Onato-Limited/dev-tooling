@@ -200,18 +200,13 @@ def test_unresolved_review_threads_are_counted(capsys, tmp_path):
     assert capsys.readouterr().out == "#12 waits: 2 blocking review threads\n"
 
 
-def test_an_answered_judgement_thread_does_not_hold_up_the_merge(capsys, tmp_path):
+def test_an_answered_judgement_thread_holds_up_the_merge(capsys, tmp_path):
     answered = review_thread("claude", "[Spec] judgement: maybe", ("onato", "Leaving it: …"))
-    unanswered = review_thread("claude", "[Spec] judgement: maybe")
-    github = FakeGitHub(
-        [pr_node(), pr_node(number=13, sha="def456")], threads={12: [answered], 13: [unanswered]}
-    )
+    github = FakeGitHub([pr_node()], threads={12: [answered]})
 
     run(github, tmp_path=tmp_path)
 
-    assert capsys.readouterr().out == (
-        "#12 merged: feat: a thing (#12)\n#13 waits: 1 blocking review threads\n"
-    )
+    assert capsys.readouterr().out == "#12 waits: 1 blocking review threads\n"
 
 
 def test_a_head_with_no_checks_at_all_waits_for_them(capsys, tmp_path):

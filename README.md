@@ -84,8 +84,10 @@ The rules come from the PR's **base branch**, so a PR can't loosen the rules it 
 against: `standards` (required), `CLAUDE.md`, `spec` and `REVIEW.md` when present, and any file
 `REVIEW.md` includes with a line that is only `@<path>`. The review makes a Standards pass over
 the diff and PR body, and a Spec pass against the issue the PR closes and the spec. Every inline
-finding starts with a label, `[Standards]` or `[Spec]` then `hard:` or `judgement:`, which review
-threads reads. If your rules define a format for findings, the review uses it after the label.
+finding starts with a label, `[Standards]` or `[Spec]` then `hard:` or `judgement:`. A hard
+finding must be fixed. A judgement finding can be taken or left, with a reply saying which and
+why. Either way the thread is then resolved. If your rules define a format for findings, the
+review uses it after the label.
 Each review is given its earlier findings on the PR and the replies to them. It doesn't raise
 again a finding that was answered, taken or left with a reason, unless the diff as it stands still
 has what either pass calls hard.
@@ -110,13 +112,9 @@ so give them a person's review instead.
 
 ## Review threads
 
-Fails while the PR has a review thread that blocks it, outdated ones included, and lists each
-one. It needs no secret and runs no Claude. Shown on the PR as `<your job> / threads`.
-
-- A hard finding, and every person's thread, blocks until it's resolved.
-- A judgement finding from the Claude review (its first line starts `[Standards] judgement:` or
-  `[Spec] judgement:`) can be taken or left. It blocks only until someone other than the reviewer
-  replies saying which, and why. It can stay open after that, and the log lists it as answered.
+Fails while the PR has an unresolved review thread, outdated ones included, and lists each one.
+Every thread blocks until it's resolved, a judgement finding that has been answered included. It
+needs no secret and runs no Claude. Shown on the PR as `<your job> / threads`.
 
 Call it from its own workflow, not the Claude review's: review events there would create skipped
 review runs, and a skipped run counts as passing.
@@ -140,8 +138,7 @@ thread was open would keep blocking the merge after the thread is resolved, unti
 it. The check still runs, and its log lists what is left. Gate the merge on the threads
 themselves instead:
 - Where `main` can be protected, turn on "Require conversation resolution before merging".
-  GitHub reads the threads as the PR merges, so every thread must be resolved first, an answered
-  judgement finding included.
+  GitHub reads the threads as the PR merges, the same rule as this check's.
 - Where it can't, merge-when-green reads the threads itself each time it runs.
 
 ## Merge when green
