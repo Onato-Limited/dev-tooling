@@ -99,6 +99,27 @@ def test_earlier_reviewer_threads_are_given_with_their_replies(repo, capsys):
     assert "Why?" not in out
 
 
+def test_a_user_account_named_like_the_reviewer_is_not_an_earlier_finding(repo, capsys):
+    repo({"CODING_STANDARDS.md": "Rule 1.\n"})
+    impostor = review_thread(
+        "w.yml", 5, [comment("claude", "[Spec] judgement: x"), comment("onato", "Left it.")]
+    )
+
+    run(query=serving(impostor))
+
+    assert "No earlier review threads.\n" in capsys.readouterr().out
+
+
+def test_a_thread_whose_first_author_was_deleted_is_not_an_earlier_finding(repo, capsys):
+    repo({"CODING_STANDARDS.md": "Rule 1.\n"})
+    deleted = review_thread("w.yml", 5, [{"author": None, "body": "Hm", "url": "u"}])
+
+    code = run(query=serving(deleted))
+
+    assert code == 0
+    assert "No earlier review threads.\n" in capsys.readouterr().out
+
+
 def test_a_pr_with_no_earlier_reviewer_threads_says_so(repo, capsys):
     repo({"CODING_STANDARDS.md": "Rule 1.\n"})
 
@@ -176,12 +197,11 @@ def test_the_prompt_names_the_pr_and_the_standards_copied_from_the_base_branch(r
     assert (root / ".review-rules/CODING_STANDARDS.md").read_text() == "Rule 1: no globals.\n"
 
 
-def test_the_prompt_asks_for_the_label_the_threads_check_reads(repo, capsys):
+def test_the_prompt_asks_for_a_label_on_every_inline_finding(repo, capsys):
     repo({"CODING_STANDARDS.md": "Rule 1.\n"})
 
     run()
 
-    # review-threads tells a judgement from a hard finding by this label on the first line.
     out = " ".join(capsys.readouterr().out.split())
     assert (
         "Start the first line of every inline comment with `[Standards]` or `[Spec]`, then "

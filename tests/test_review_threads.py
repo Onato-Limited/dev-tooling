@@ -12,9 +12,9 @@ FIX = (
 )
 
 
-def person(login, kind=None):
+def person(login):
     """A comment's author as GraphQL gives it: the Claude app is the Bot `claude`."""
-    return {"__typename": kind or ("Bot" if login == "claude" else "User"), "login": login}
+    return {"__typename": "Bot" if login == "claude" else "User", "login": login}
 
 
 def thread(path, line, author, body, resolved=False, outdated=False, url="https://x/1", replies=()):
