@@ -17,10 +17,26 @@ class Result:
     largest: list[tuple[str, int]]
 
 
+def entries(numstat: str):
+    """(added, deleted, path) for each file of `git diff -z --numstat`, a renamed one under its
+    new path. Newline-separated input is read too."""
+    if "\0" not in numstat:
+        yield from (tuple(line.split("\t", 2)) for line in numstat.splitlines())
+        return
+    fields = iter(numstat.split("\0"))
+    for field in fields:
+        if not field:
+            continue
+        added, deleted, path = field.split("\t", 2)
+        if not path:  # a rename: its old path, then its new one, follow as fields of their own
+            next(fields)
+            path = next(fields)
+        yield added, deleted, path
+
+
 def check(numstat: str, excludes: list[str], limit: int) -> Result:
     sizes: dict[str, int] = {}
-    for line in numstat.splitlines():
-        added, deleted, path = line.split("\t", 2)
+    for added, deleted, path in entries(numstat):
         binary = added == "-"
         if not binary and not matches_any(path, excludes):
             sizes[path] = int(added) + int(deleted)

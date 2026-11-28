@@ -52,12 +52,41 @@ HUNK = re.compile(r"^@@ -\S+ \+(\d+)")
 NOTES = re.compile(r"^## Concurrency notes\s*$", re.M)
 
 
+ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def header_path(header: str) -> str:
+    """The path a patch's `+++` header names, as written. Git adds a tab after a name with a
+    space in it, and C-quotes one with a quote, a backslash or a control character in it. Text
+    that isn't valid C-quoting is left as it is."""
+    header = header.removesuffix("\t")  # a quoted name never ends in a raw tab
+    if len(header) < 2 or not (header.startswith('"') and header.endswith('"')):
+        return header
+    raw, out, i = header[1:-1].encode(), bytearray(), 0
+    while i < len(raw):
+        if raw[i] != ord("\\"):
+            out.append(raw[i])
+            i += 1
+        elif re.fullmatch(rb"[0-3][0-7]{2}", raw[i + 1 : i + 4]):
+            out.append(int(raw[i + 1 : i + 4], 8))
+            i += 4
+        elif (escape := ESCAPES.get(chr(raw[i + 1]) if i + 1 < len(raw) else "")) is not None:
+            out.append(escape)
+            i += 2
+        else:
+            return header
+    return out.decode(errors="surrogateescape")
+
+
 def added_lines(diff: str):
     """(path, line number, text) for each added line of a `git diff -U0`."""
     path, number = None, 0
-    for line in diff.splitlines():
+    # Not splitlines(), which would also break a name at U+2028. A raw \r can only end a CRLF
+    # line: git escapes one in a name.
+    for line in diff.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("+++ "):
-            path = line[4:].removeprefix("b/")
+            path = header_path(line[4:]).removeprefix("b/")
         elif hunk := HUNK.match(line):
             number = int(hunk[1])
         elif line.startswith("+"):

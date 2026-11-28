@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from devtool.gates import approved_by_review
+from devtool.gates import approved_by_review, paths
 
 FIX = "Ask one of each file's owners to approve the PR."
 
@@ -80,7 +80,7 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
         for r in json.loads(args.reviews.read_text())
     ]
     author = (args.author or "").lower()
-    owned = [(p, o) for p in stdin.read().splitlines() if (o := owners_of(p, table))]
+    owned = [(p, o) for p in paths(stdin.read()) if (o := owners_of(p, table))]
     if not owned:
         print("No owned files changed.")
         return 0
