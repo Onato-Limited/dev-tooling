@@ -1,4 +1,6 @@
+import io
 import subprocess
+import sys
 from importlib.resources import files
 from pathlib import Path
 
@@ -160,3 +162,22 @@ def test_the_prompt_says_the_loop_resumes_the_issue_once_the_pr_is_approved():
         "Once {approver} approves the PR, the loop moves the issue back to Todo, and a resumed "
         "session finishes the PR." in prompt_text()
     )
+
+
+class Recording(io.StringIO):
+    def __init__(self):
+        super().__init__()
+        self.at_flush = []
+
+    def flush(self):
+        self.at_flush.append(self.getvalue())
+
+
+def test_each_message_reaches_stdout_before_the_notify_command_runs(monkeypatch):
+    out = Recording()
+    monkeypatch.setattr(sys, "stdout", out)
+    seen = []
+
+    notifier("notify", Path("."), lambda args, **kw: seen.append(list(out.at_flush)))("one")
+
+    assert seen == [["one\n"]]
