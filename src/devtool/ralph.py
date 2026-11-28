@@ -202,6 +202,7 @@ class _Loop:
     pending: dict[int, int | None] = field(default_factory=dict)
     awaiting: dict[int, tuple[int, str]] = field(default_factory=dict)  # PR → its issue, label
     unlabelled: list[str] = field(default_factory=list)  # label waits that ran out
+    taken_back: set[tuple[int, str]] = field(default_factory=set)  # (PR, label), once each
     stuck: dict[int, str] = field(default_factory=dict)
     fixed: list[int] = field(default_factory=list)
     left_in_place: dict[int, str] = field(default_factory=dict)  # issue → why its worktree stayed
@@ -315,9 +316,13 @@ class _Loop:
         session finishes the PR: it may still need work once the label's check passes."""
         taken = False
         for pr, (issue, label) in list(self.awaiting.items()):
+            if not self.github.is_open(issue):  # merged or closed by the owner meanwhile
+                del self.awaiting[pr]
+                continue
             if not self.github.label_approved(pr, label):
                 continue
             del self.awaiting[pr]
+            self.taken_back.add((pr, label))
             self.stuck.pop(issue, None)
             self.github.set_status(issue, TODO)
             self.github.comment(
@@ -422,6 +427,8 @@ class _Loop:
 
     def work(self, issue: Issue) -> None:
         self.waiting_since = None
+        # The owner may have answered a label wait another way and moved the issue back to Todo.
+        self.awaiting = {pr: wait for pr, wait in self.awaiting.items() if wait[0] != issue.number}
         self.iterations += 1
         self.github.set_status(issue.number, IN_PROGRESS)
         outcome = self.session.work(issue, self.update_behind_pending)
@@ -449,7 +456,8 @@ class _Loop:
     def await_approval(self, issue: int, outcome: Outcome) -> None:
         """A stop asking for an approval label on the session's own PR: the loop watches for it."""
         stop = APPROVAL_STOP.match(outcome.needs_human or "")
-        if stop and int(stop[1]) == outcome.pr:
+        # A second stop for a label already taken back means the loop and the check disagree.
+        if stop and int(stop[1]) == outcome.pr and (outcome.pr, stop[2]) not in self.taken_back:
             self.awaiting[outcome.pr] = (issue, stop[2])
 
     def stop_message(self, headline: str | None) -> str:
