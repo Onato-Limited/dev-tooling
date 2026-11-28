@@ -48,3 +48,9 @@ def review(login, state):
 )
 def test_the_approvers_latest_deciding_review_decides(reviews, approved):
     assert approved_by_review(reviews, "onato") is approved
+
+
+def test_with_no_approver_no_review_approves():
+    deleted = {"user": None, "state": "APPROVED"}
+
+    assert approved_by_review([deleted, review("someone", "APPROVED")], None) is False

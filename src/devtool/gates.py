@@ -43,6 +43,8 @@ DECIDING = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
 
 def approved_by_review(reviews: list[dict], approver: str | None) -> bool:
     """Whether the approver's latest deciding review on the PR is an approval."""
+    if approver is None:  # else a deleted account's review, with no login, would match
+        return False
     decisions = [
         r["state"]
         for r in reviews
