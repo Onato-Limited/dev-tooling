@@ -196,3 +196,8 @@ def test_an_added_crlf_line_matches_a_pattern_anchored_at_its_end(tmp_path, caps
     code = pr_shape.main(argv, stdin=io.StringIO(diff, newline=""))
 
     assert (code, "  src/a.py:1: foo lock()" in capsys.readouterr().out) == (1, True)
+
+
+def test_a_quoted_name_holding_a_byte_that_isnt_utf8_is_read_as_written():
+    # Python reads such a byte as a lone surrogate under a C or C.UTF-8 locale.
+    assert header_path('"a\udce9\\"b"') == 'a\udce9"b'
