@@ -5,12 +5,31 @@ Shared CI policy checks, PR review and Ralph loop tooling for Onato Limited proj
 ## Use
 
 ```sh
-uvx --from git+https://github.com/Onato-Limited/dev-tooling@v1 devtool --version
+uvx --from git+https://github.com/Onato-Limited/dev-tooling@v2 devtool --version
 ```
 
-Pin `@v1`: it moves to each `v1.x.y` release and never to a breaking one. Each release's notes
+Pin `@v2`: it moves to each `v2.x.y` release and never to a breaking one. Each release's notes
 are on the [Releases](https://github.com/Onato-Limited/dev-tooling/releases) page; watch the repo
-for releases to hear about new checks and inputs.
+for releases to hear about new checks and inputs. `@v1` stays where it is and gets no more
+releases; see [Moving from v1](#moving-from-v1).
+
+### Moving from v1
+
+v2 asks for approval with GitHub's own tools, reviews and `CODEOWNERS`, instead of labels.
+
+- **`size`:** an oversized PR passes on an approving review from `approver`, not the
+  `size-approved` label. GitHub doesn't let anyone approve their own PR.
+- **Triggers:** the caller runs on `pull_request_review` (`submitted`, `dismissed`) instead of
+  the `labeled` and `unlabeled` types, as in the [example](#pr-policy-checks).
+- **Permissions:** the policy job needs `contents: read` and `pull-requests: read`; drop
+  `issues: read`.
+- **`review-paths`** is gone. Put its patterns in `.github/CODEOWNERS` with their owners: an
+  approving review from one of a file's owners passes `codeowners`, not the `review-approved`
+  label. Where `main` can be protected, turn on "Require review from Code Owners"; where it
+  can't, list `policy / codeowners` in `.github/required-checks`. A `CODEOWNERS` line with no
+  owners stands in for a `!` pattern.
+- **The Ralph loop:** a session requests your review instead of asking for a label, and the loop
+  takes the PR back when you approve it. `plan-approved` is still a label.
 
 ## PR policy checks
 
@@ -27,10 +46,9 @@ on:
     types: [submitted, dismissed]
 jobs:
   policy:
-    uses: Onato-Limited/dev-tooling/.github/workflows/pr-policy.yml@v1
+    uses: Onato-Limited/dev-tooling/.github/workflows/pr-policy.yml@v2
     permissions:
       contents: read
-      issues: read
       pull-requests: read
     with:
       approver: <login>
@@ -49,9 +67,6 @@ An oversized PR is a warning you can accept: approve the PR, as `approver`, in G
 UI. Where `main` is protected, turn on "Dismiss stale pull request approvals when new commits are
 pushed", so a later push needs a fresh approval. GitHub doesn't let you approve your own PR, so
 an oversized PR you opened yourself is split, or merged by an admin.
-
-The review trigger and approving by review are v2, not yet released: on `@v1`, `size` still
-passes on the `size-approved` label, and its jobs don't run on review events.
 
 `required-checks` reads your workflows the way GitHub names checks: a job's `name:`, or its id; a
 job that calls a workflow reports `<job> / <called job>` for each called job, fetching the called
@@ -96,7 +111,7 @@ on:
     types: [opened, synchronize, reopened, edited]
 jobs:
   claude:
-    uses: Onato-Limited/dev-tooling/.github/workflows/claude-review.yml@v1
+    uses: Onato-Limited/dev-tooling/.github/workflows/claude-review.yml@v2
     permissions:
       contents: read
       pull-requests: write
@@ -154,7 +169,7 @@ on:
   pull_request_review_comment:
 jobs:
   review-threads:
-    uses: Onato-Limited/dev-tooling/.github/workflows/review-threads.yml@v1
+    uses: Onato-Limited/dev-tooling/.github/workflows/review-threads.yml@v2
     permissions:
       contents: read
       pull-requests: read
@@ -204,7 +219,7 @@ on:
     - cron: "*/15 * * * *"
 jobs:
   merge-when-green:
-    uses: Onato-Limited/dev-tooling/.github/workflows/merge-when-green.yml@v1
+    uses: Onato-Limited/dev-tooling/.github/workflows/merge-when-green.yml@v2
     permissions:
       contents: read
     secrets:
@@ -247,7 +262,7 @@ on:
     branches: [main]
 jobs:
   main-audit:
-    uses: Onato-Limited/dev-tooling/.github/workflows/main-audit.yml@v1
+    uses: Onato-Limited/dev-tooling/.github/workflows/main-audit.yml@v2
     permissions:
       contents: read
       pull-requests: read
@@ -264,7 +279,7 @@ jobs:
 issue, until the milestone is done or something needs you. Run it from the project's checkout:
 
 ```sh
-uvx --from git+https://github.com/Onato-Limited/dev-tooling@v1 devtool ralph --milestone 12
+uvx --from git+https://github.com/Onato-Limited/dev-tooling@v2 devtool ralph --milestone 12
 ```
 
 - `--milestone N` is the parent issue; its sub-issues are the milestone.
@@ -286,8 +301,7 @@ approval: …`. For `size` it requests your review; for `codeowners`, GitHub alr
 watches that PR while it runs. Once you approve it in GitHub's review UI, the loop moves the
 issue back to Todo, and a resumed session finishes the PR, which may still need work. If the
 loop has stopped before you approve, its stop message lists the PR; move the issue back to Todo
-yourself. Approving by review is v2, not yet released: on `@v1` the loop still waits for the
-`size-approved` or `review-approved` label.
+yourself.
 
 The loop stops, and says why, when nothing is left to take, at the iteration cap, or when its
 PRs still haven't merged, or haven't been approved, after it has waited an hour.

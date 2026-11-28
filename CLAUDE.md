@@ -1,7 +1,7 @@
 # dev-tooling
 
 Shared CI checks, PR review and the Ralph loop, as one Python CLI (`devtool`) and reusable GitHub
-workflows that other repos call pinned at `@v1`.
+workflows that other repos call pinned at `@v2`.
 
 - `CODING_STANDARDS.md`: what every change here must meet.
 - GitHub issues on `Onato-Limited/dev-tooling`: the work queue. Each issue's "Tests to write first"

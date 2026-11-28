@@ -12,7 +12,7 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      # The CLI comes from the same commit as this workflow, so a caller pinned at @v1 never runs
+      # The CLI comes from the same commit as this workflow, so a caller pinned at @v2 never runs
       # a different version of the check than the workflow it called.
       - name: Find this workflow's commit
         env:
