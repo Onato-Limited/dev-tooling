@@ -10,7 +10,6 @@ jobs:
     uses: ./.github/workflows/pr-policy.yml
     permissions:
       contents: read
-      issues: read
       pull-requests: read
     with:
       approver: onato
