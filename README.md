@@ -334,8 +334,8 @@ stop starts `Ralph loop stopped:` or `Ralph loop can't`.
   `security add-generic-password -s <app_slug> -a private-key -w "$(cat <key>.pem)"`.
   A real run mints a token before taking an issue, so a missing key stops it at once.
   Add `allowed-bots: <app_slug>` to your [Claude review](#claude-review) caller too: the
-  review action refuses a PR a bot opened unless that bot is listed, so every loop PR's
-  `review` check fails.
+  review action refuses a PR a bot opened unless that bot is listed, so without it every loop
+  PR's `review` check fails.
 
 Branches use the repo's git identity as their prefix: `git config github.user`, or else your
 email's name without GitHub's `NNN+`.
