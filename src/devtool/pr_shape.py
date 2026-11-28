@@ -52,12 +52,34 @@ HUNK = re.compile(r"^@@ -\S+ \+(\d+)")
 NOTES = re.compile(r"^## Concurrency notes\s*$", re.M)
 
 
+ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def header_path(header: str) -> str:
+    """The path a patch's `+++` header names, as written. Git C-quotes a path with a quote, a
+    backslash or a control character in it, and adds a tab after one with a space in it."""
+    if not header.startswith('"'):
+        return header.removesuffix("\t")
+    raw, out, i = header[1:-1].encode(), bytearray(), 0
+    while i < len(raw):
+        if raw[i] != ord("\\"):
+            out.append(raw[i])
+            i += 1
+        elif chr(raw[i + 1]) in "01234567":
+            out.append(int(raw[i + 1 : i + 4], 8))
+            i += 4
+        else:
+            out.append(ESCAPES[chr(raw[i + 1])])
+            i += 2
+    return out.decode(errors="surrogateescape")
+
+
 def added_lines(diff: str):
     """(path, line number, text) for each added line of a `git diff -U0`."""
     path, number = None, 0
     for line in diff.splitlines():
         if line.startswith("+++ "):
-            path = line[4:].removeprefix("b/")
+            path = header_path(line[4:]).removeprefix("b/")
         elif hunk := HUNK.match(line):
             number = int(hunk[1])
         elif line.startswith("+"):

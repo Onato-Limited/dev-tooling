@@ -4,7 +4,7 @@ import argparse
 import sys
 from typing import TextIO
 
-from devtool.gates import load_patterns, matches_any
+from devtool.gates import load_patterns, matches_any, paths
 
 FIX = (
     "Files matching the protected-paths input may not change in a PR. Revert the changes to these "
@@ -22,7 +22,7 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
     args = parser.parse_args(argv)
 
     patterns = load_patterns(args.patterns)
-    touched = [path for path in stdin.read().splitlines() if matches_any(path, patterns)]
+    touched = [path for path in paths(stdin.read()) if matches_any(path, patterns)]
     if not touched:
         print("No protected paths changed.")
         return 0

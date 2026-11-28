@@ -57,3 +57,9 @@ def approved_by_review(reviews: list[dict], approver: str | None) -> bool:
 def load_patterns(text: str) -> list[str]:
     lines = (line.strip() for line in text.splitlines())
     return [line for line in lines if line and not line.startswith("#")]
+
+
+def paths(listing: str) -> list[str]:
+    """The paths in `git diff -z --name-only` output, which never quotes one. Newline-separated
+    input is read too."""
+    return [path for path in listing.split("\0" if "\0" in listing else "\n") if path]

@@ -126,7 +126,7 @@ def test_pr_policy_reads_codeowners_from_the_base_branch_and_passes_it_with_the_
         'gh api --paginate "repos/$REPO/pulls/$PR/reviews"' in steps["Read the PR's reviews"]["run"]
     )
     assert (
-        'git -c core.quotePath=false diff --name-only --no-renames "origin/$BASE_REF...HEAD"'
+        'git -c core.quotePath=false diff -z --name-only --no-renames "origin/$BASE_REF...HEAD"'
         in command
     )
     assert '--codeowners "$RUNNER_TEMP/CODEOWNERS"' in command
