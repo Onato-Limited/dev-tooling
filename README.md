@@ -265,10 +265,10 @@ stop starts `Ralph loop stopped:` or `Ralph loop can't`.
   `<app_slug>[bot]`. The bot's user ID, for its commit email, isn't configured: each run, a dry
   run included, looks it up with `gh api users/<app_slug>[bot]`, so a wrong `app_slug` stops the
   loop there. Give the app read and write access to Contents, Pull requests and Issues, and
-  read access to Checks. It also needs Workflows whenever `.github/workflows` changes, in a
-  session's PR or on `main`: the loop pushes `main`'s merge to each open PR's branch as the app,
-  and GitHub refuses that push without it. Install the app on the repo, and keep its private key
-  in your login keychain under the app's slug:
+  read access to Checks. It also needs Workflows if a session may change `.github/workflows`:
+  GitHub refuses the app's push of a commit that does. Pushing `main`'s merge to a PR's branch
+  needs no Workflows, even when `main`'s new commits change a workflow. Install the app on the
+  repo, and keep its private key in your login keychain under the app's slug:
   `security add-generic-password -s <app_slug> -a private-key -w "$(cat <key>.pem)"`.
   A real run mints a token before taking an issue, so a missing key stops it at once.
 
