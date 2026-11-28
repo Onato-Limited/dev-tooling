@@ -36,7 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
@@ -72,10 +71,11 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           LIMIT: ${{ inputs.limit }}
           APPROVER: ${{ inputs.approver }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: >
           git diff --numstat "origin/$BASE_REF...HEAD"
           | uv run --quiet --frozen --no-dev --project .devtool devtool pr-size
-          --limit "$LIMIT" --reviews "$RUNNER_TEMP/reviews.json"
+          --limit "$LIMIT" --reviews "$RUNNER_TEMP/reviews.json" --author "$AUTHOR"
           ${APPROVER:+--approver "$APPROVER"}
   protected-paths:
     runs-on: ubuntu-latest

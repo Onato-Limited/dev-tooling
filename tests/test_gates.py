@@ -34,6 +34,7 @@ def review(login, state):
         ([review("onato", "APPROVED"), review("onato", "COMMENTED")], True),
         ([review("someone", "APPROVED")], False),
         ([], False),
+        ([{"user": None, "state": "APPROVED"}], False),
     ],
     ids=[
         "approved",
@@ -42,6 +43,7 @@ def review(login, state):
         "a comment later doesn't undo it",
         "another login's approval",
         "no reviews",
+        "a deleted account's review",
     ],
 )
 def test_the_approvers_latest_deciding_review_decides(reviews, approved):

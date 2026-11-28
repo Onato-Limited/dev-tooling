@@ -37,6 +37,7 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
     parser.add_argument("--exclude-file", type=Path, default=Path(".github/pr-size-exclude"))
     parser.add_argument("--approver", help="the only login whose approving review counts")
     parser.add_argument("--reviews", type=Path, help="the PR's reviews, as JSON")
+    parser.add_argument("--author", help="the PR's author, who can't approve their own PR")
     args = parser.parse_args(argv)
 
     excludes = load_patterns(args.exclude_file.read_text()) if args.exclude_file.exists() else []
@@ -50,15 +51,20 @@ def main(argv: list[str], stdin: TextIO = sys.stdin) -> int:
         print(f"  {size:6d}  {path}")
     if result.passed or approved:
         return 0
-    print(fix(args.limit, args.approver))
+    print(fix(args.limit, args.approver, args.author))
     return 1
 
 
-def fix(limit: int, approver: str | None) -> str:
+def fix(limit: int, approver: str | None, author: str | None = None) -> str:
     split = (
         f"PRs change at most {limit} lines. "
         "Split this PR into smaller ones that each merge on their own"
     )
     if approver is None:
         return split + "."
+    if approver == author:
+        return (
+            f"{split}. GitHub doesn't let {approver} approve their own PR, so to keep it as one, "
+            "an admin merges it."
+        )
     return f"{split}, or ask {approver} to approve it as one."

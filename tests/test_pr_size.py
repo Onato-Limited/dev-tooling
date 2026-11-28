@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from devtool.pr_size import check, main
@@ -172,3 +173,33 @@ def test_pr_policy_reads_the_pr_from_the_event_that_review_events_also_carry():
 
     assert "github.base_ref" not in workflow
     assert "github.event.number" not in workflow
+
+
+def test_the_label_events_option_is_gone(tmp_path):
+    with pytest.raises(SystemExit) as exit_:
+        main(["--label-events", str(tmp_path / "e.json")], stdin=io.StringIO(""))
+
+    assert exit_.value.code == 2
+
+
+def test_when_the_approver_wrote_the_pr_the_fix_says_they_cant_approve_it(capsys):
+    numstat = io.StringIO("11\t0\tsrc/a.kt\n")
+
+    main(["--limit", "10", "--approver", "onato", "--author", "onato"], stdin=numstat)
+
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert last == (
+        "PRs change at most 10 lines. Split this PR into smaller ones that each merge on their "
+        "own. GitHub doesn't let onato approve their own PR, so to keep it as one, an admin "
+        "merges it."
+    )
+
+
+def test_pr_policy_passes_the_prs_author_to_the_size_check():
+    workflow = yaml.safe_load(Path(".github/workflows/pr-policy.yml").read_text())
+    job = workflow["jobs"]["size"]
+    count = next(s for s in job["steps"] if s.get("name") == "Count changed lines")
+
+    assert count["env"]["AUTHOR"] == "${{ github.event.pull_request.user.login }}"
+    assert '--author "$AUTHOR"' in " ".join(count["run"].split())
+    assert "issues" not in job["permissions"]

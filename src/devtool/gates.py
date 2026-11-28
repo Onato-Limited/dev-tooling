@@ -44,7 +44,10 @@ DECIDING = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
 def approved_by_review(reviews: list[dict], approver: str | None) -> bool:
     """Whether the approver's latest deciding review on the PR is an approval."""
     decisions = [
-        r["state"] for r in reviews if r["user"]["login"] == approver and r["state"] in DECIDING
+        r["state"]
+        for r in reviews
+        # A deleted account's review has no user.
+        if (r["user"] or {}).get("login") == approver and r["state"] in DECIDING
     ]
     return bool(decisions) and decisions[-1] == "APPROVED"
 

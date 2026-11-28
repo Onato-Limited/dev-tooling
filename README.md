@@ -48,7 +48,11 @@ jobs:
 
 An oversized PR is a warning you can accept: approve the PR, as `approver`, in GitHub's review
 UI. Where `main` is protected, turn on "Dismiss stale pull request approvals when new commits are
-pushed", so a later push needs a fresh approval.
+pushed", so a later push needs a fresh approval. GitHub doesn't let you approve your own PR, so
+an oversized PR you opened yourself is split, or merged by an admin.
+
+The review trigger and approving by review are v2, not yet released: on `@v1`, `size` still
+passes on the `size-approved` label, and its jobs don't run on review events.
 
 `required-checks` reads your workflows the way GitHub names checks: a job's `name:`, or its id; a
 job that calls a workflow reports `<job> / <called job>` for each called job, fetching the called
