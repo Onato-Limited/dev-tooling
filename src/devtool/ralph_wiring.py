@@ -55,7 +55,7 @@ def notifier(command: str | None, repo: Path, run: Runner) -> Callable[[str], No
     the device commands, it runs in the checkout, wherever the loop was started from."""
 
     def notify(message: str) -> None:
-        print(message)
+        print(message, flush=True)  # a redirected stdout would otherwise hold it until exit
         if command:
             run([*shlex.split(command), message], cwd=repo, check=False)
 
